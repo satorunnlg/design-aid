@@ -103,15 +103,27 @@ design-aid/
 ├── src/
 │   └── DesignAid/
 │       ├── Commands/                      # CLI コマンド定義
+│       │   ├── Project/                   # プロジェクト管理
+│       │   │   ├── ProjectAddCommand.cs
+│       │   │   ├── ProjectListCommand.cs
+│       │   │   └── ProjectRemoveCommand.cs
+│       │   ├── Asset/                     # 装置管理
+│       │   │   ├── AssetAddCommand.cs
+│       │   │   ├── AssetListCommand.cs
+│       │   │   └── AssetRemoveCommand.cs
+│       │   ├── Part/                      # パーツ管理
+│       │   │   ├── PartAddCommand.cs
+│       │   │   └── PartListCommand.cs
 │       │   ├── CheckCommand.cs            # da check
 │       │   ├── VerifyCommand.cs           # da verify
 │       │   ├── SyncCommand.cs             # da sync
 │       │   ├── DeployCommand.cs           # da deploy
 │       │   ├── SearchCommand.cs           # da search
-│       │   ├── InitCommand.cs             # da init
 │       │   └── StatusCommand.cs           # da status
 │       ├── Domain/                        # ドメインモデル
 │       │   ├── Entities/
+│       │   │   ├── Project.cs             # プロジェクト
+│       │   │   ├── Asset.cs               # 装置
 │       │   │   ├── DesignComponent.cs     # パーツ基底クラス
 │       │   │   ├── FabricatedPart.cs      # 製作物
 │       │   │   ├── PurchasedPart.cs       # 購入品
@@ -129,13 +141,17 @@ design-aid/
 │       │       └── ToleranceStandard.cs   # 公差基準
 │       ├── Application/                   # アプリケーションサービス
 │       │   ├── Services/
-│       │   │   ├── HashService.cs         # ハッシュ計算・検証
+│       │   │   ├── ProjectService.cs      # プロジェクト管理
+│       │   │   ├── AssetService.cs        # 装置管理
 │       │   │   ├── PartService.cs         # パーツ管理
+│       │   │   ├── HashService.cs         # ハッシュ計算・検証
 │       │   │   ├── SyncService.cs         # DB同期
 │       │   │   ├── ValidationService.cs   # 設計基準バリデーション
 │       │   │   ├── DeployService.cs       # 手配パッケージ作成
 │       │   │   └── SearchService.cs       # 類似設計検索
 │       │   └── DTOs/
+│       │       ├── ProjectDto.cs
+│       │       ├── AssetDto.cs
 │       │       ├── PartDto.cs
 │       │       ├── CheckResultDto.cs
 │       │       └── SearchResultDto.cs
@@ -143,6 +159,8 @@ design-aid/
 │       │   ├── Persistence/
 │       │   │   ├── DesignAidDbContext.cs  # EF Core DbContext
 │       │   │   ├── Configurations/        # エンティティ設定
+│       │   │   │   ├── ProjectConfiguration.cs
+│       │   │   │   ├── AssetConfiguration.cs
 │       │   │   │   ├── PartConfiguration.cs
 │       │   │   │   └── HandoverConfiguration.cs
 │       │   │   └── Migrations/            # マイグレーション
@@ -150,6 +168,8 @@ design-aid/
 │       │   │   ├── QdrantService.cs       # Qdrant クライアント
 │       │   │   └── EmbeddingService.cs    # ベクトル化サービス
 │       │   └── FileSystem/
+│       │       ├── ProjectMarkerService.cs # .da-project 管理
+│       │       ├── AssetJsonReader.cs     # asset.json 読み書き
 │       │       ├── PartJsonReader.cs      # part.json 読み書き
 │       │       └── ArtifactScanner.cs     # 成果物スキャン
 │       ├── Configuration/                 # 設定
@@ -160,9 +180,13 @@ design-aid/
 ├── tests/
 │   └── DesignAid.Tests/
 │       ├── Domain/
+│       │   ├── ProjectTests.cs
+│       │   ├── AssetTests.cs
 │       │   ├── DesignComponentTests.cs
 │       │   └── FileHashTests.cs
 │       ├── Application/
+│       │   ├── ProjectServiceTests.cs
+│       │   ├── AssetServiceTests.cs
 │       │   ├── HashServiceTests.cs
 │       │   ├── ValidationServiceTests.cs
 │       │   └── SyncServiceTests.cs
@@ -170,8 +194,19 @@ design-aid/
 │       │   ├── QdrantIntegrationTests.cs
 │       │   └── SqliteIntegrationTests.cs
 │       └── DesignAid.Tests.csproj
+├── data/                                  # 開発用データディレクトリ
+│   ├── config.json                        # 開発用設定
+│   ├── design_aid.db                      # 開発用DB（gitignore）
+│   └── projects/                          # サンプルプロジェクト
+│       └── sample-project/
+│           ├── .da-project
+│           └── assets/
+│               └── sample-asset/
+│                   ├── asset.json
+│                   └── components/
 ├── docker-compose.yml                     # Qdrant 起動用
 ├── appsettings.json                       # 設定ファイル
+├── appsettings.Development.json           # 開発用設定（DA_DATA_DIR=./data）
 ├── DesignAid.sln
 ├── CLAUDE.md
 └── DESIGN.md
@@ -228,6 +263,19 @@ dotnet add tests/DesignAid.Tests package Moq
 # 依存関係の復元
 dotnet restore
 
+# 開発用データディレクトリ作成
+mkdir -p data/projects
+
+# 環境変数設定（開発用）
+# Windows (PowerShell)
+$env:DA_DATA_DIR = "./data"
+
+# Windows (cmd)
+set DA_DATA_DIR=./data
+
+# Linux/macOS
+export DA_DATA_DIR="./data"
+
 # Qdrant 起動
 docker compose up -d
 
@@ -279,25 +327,106 @@ dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 
 ## データ構造
 
+### システムディレクトリ
+
+Design Aid はシステムディレクトリに設定と統合DBを配置し、複数プロジェクトを横断管理する。
+
+```text
+# 本番環境
+~/.design-aid/                      # Windows: %APPDATA%\design-aid
+├── config.json                     # グローバル設定
+└── design_aid.db                   # 統合DB（全プロジェクト）
+
+# 開発環境（このリポジトリ内）
+design-aid/
+├── src/
+├── tests/
+├── data/                           # 開発用データ
+│   ├── config.json
+│   ├── design_aid.db
+│   └── projects/                   # サンプルプロジェクト
+│       └── sample-project/
+└── ...
+```
+
+### 階層構造
+
+```
+プロジェクト (Project)
+  └── 装置 (Asset) ※複数
+        └── 部品 (Component) ※複数
+```
+
+| 階層 | 説明 | 例 |
+|------|------|-----|
+| Project | 案件・プロジェクト単位 | `elevator-renewal`, `packaging-line-2026` |
+| Asset | プロジェクト内の装置・ユニット | `lifting-unit`, `control-panel`, `conveyor-A` |
+| Component | 手配境界となる部品 | `SP-2026-PLATE-01`, `MTR-001` |
+
+### プロジェクトディレクトリ構造
+
+プロジェクトは任意の場所に配置可能。DB への登録で管理対象となる。
+
+```text
+C:/work/elevator-renewal/           # 任意の場所
+├── .da-project                     # DA管理マーカー（project_id, 登録日時）
+├── docs/                           # プロジェクト関連ドキュメント（任意）
+└── assets/                         # 装置群
+    ├── lifting-unit/               # 装置A
+    │   ├── asset.json              # 装置定義
+    │   └── components/             # 部品群
+    │       ├── SP-2026-PLATE-01/
+    │       │   ├── part.json       # パーツ定義
+    │       │   ├── drawing.dxf     # 製作図面
+    │       │   └── calculation.pdf # 計算書
+    │       └── MTR-001/
+    │           ├── part.json
+    │           └── spec.pdf        # 選定根拠
+    └── control-panel/              # 装置B
+        ├── asset.json
+        └── components/
+            └── ...
+```
+
+### .da-project 仕様
+
+```json
+{
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "elevator-renewal",
+  "registered_at": "2026-02-02T10:30:00Z"
+}
+```
+
+### asset.json 仕様
+
+```json
+{
+  "id": "660e8400-e29b-41d4-a716-446655440001",
+  "name": "lifting-unit",
+  "display_name": "昇降ユニット",
+  "description": "メイン昇降機構",
+  "created_at": "2026-02-02T10:30:00Z"
+}
+```
+
 ### 手配境界（Procurement Boundary）
 
 本システムでは、以下のディレクトリ構造を「1つの部品（パーツ）」の最小単位として扱う。
 
 ```text
-/my-project/
-  ├── design_aid.db          # SQLite DB (プロジェクト単位)
-  └── /components/
-      └── /SP-2026-PLATE-01/
-          ├── part.json      # パーツ定義（手動/自動生成）
-          ├── drawing.dxf    # 製作図面
-          └── selection.pdf  # 選定根拠/計算書
+/components/SP-2026-PLATE-01/
+  ├── part.json      # パーツ定義（手動/自動生成）
+  ├── drawing.dxf    # 製作図面
+  └── selection.pdf  # 選定根拠/計算書
 ```
 
 ### part.json 仕様
 
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "id": "770e8400-e29b-41d4-a716-446655440002",
+  "asset_id": "660e8400-e29b-41d4-a716-446655440001",
   "part_number": "SP-2026-PLATE-01",
   "name": "昇降ベースプレート",
   "type": "Fabricated",
@@ -340,10 +469,41 @@ dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 ### テーブル定義
 
 ```sql
+-- プロジェクトマスタ
+CREATE TABLE Projects (
+    Id TEXT PRIMARY KEY,          -- UUID v4
+    Name TEXT NOT NULL UNIQUE,    -- プロジェクト名（ディレクトリ名）
+    DisplayName TEXT,             -- 表示名
+    DirectoryPath TEXT NOT NULL,  -- プロジェクトディレクトリの絶対パス
+    Description TEXT,
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL
+);
+
+CREATE INDEX IX_Projects_Name ON Projects(Name);
+
+-- 装置マスタ
+CREATE TABLE Assets (
+    Id TEXT PRIMARY KEY,          -- UUID v4
+    ProjectId TEXT NOT NULL,      -- Projects.Id への参照
+    Name TEXT NOT NULL,           -- 装置名（ディレクトリ名）
+    DisplayName TEXT,             -- 表示名
+    Description TEXT,
+    DirectoryPath TEXT NOT NULL,  -- 装置ディレクトリの絶対パス
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    FOREIGN KEY (ProjectId) REFERENCES Projects(Id),
+    UNIQUE (ProjectId, Name)
+);
+
+CREATE INDEX IX_Assets_ProjectId ON Assets(ProjectId);
+CREATE INDEX IX_Assets_Name ON Assets(Name);
+
 -- パーツマスタ
 CREATE TABLE Parts (
     Id TEXT PRIMARY KEY,          -- UUID v4
-    PartNumber TEXT NOT NULL UNIQUE, -- 型式（人間が識別する番号）
+    AssetId TEXT NOT NULL,        -- Assets.Id への参照
+    PartNumber TEXT NOT NULL,     -- 型式（人間が識別する番号）
     Name TEXT NOT NULL,
     Type TEXT NOT NULL,           -- Fabricated/Purchased/Standard
     Version TEXT NOT NULL,
@@ -351,10 +511,13 @@ CREATE TABLE Parts (
     DirectoryPath TEXT NOT NULL,
     MetaDataJson TEXT,            -- JSON 形式のメタデータ
     CreatedAt TEXT NOT NULL,
-    UpdatedAt TEXT NOT NULL
+    UpdatedAt TEXT NOT NULL,
+    FOREIGN KEY (AssetId) REFERENCES Assets(Id),
+    UNIQUE (AssetId, PartNumber)  -- 同一装置内でユニーク
 );
 
 -- インデックス
+CREATE INDEX IX_Parts_AssetId ON Parts(AssetId);
 CREATE INDEX IX_Parts_PartNumber ON Parts(PartNumber);
 CREATE INDEX IX_Parts_Type ON Parts(Type);
 
@@ -496,9 +659,12 @@ Collection: design_knowledge
 ├── id: UUID
 ├── vector: float[N]     # 埋め込みベクトル（次元数はプロバイダーに依存）
 └── payload:
-    ├── part_id: UUID            # 内部ID
+    ├── part_id: UUID            # パーツ内部ID
     ├── part_number: string      # 型式
-    ├── project_id: string
+    ├── asset_id: UUID           # 装置内部ID
+    ├── asset_name: string       # 装置名
+    ├── project_id: UUID         # プロジェクト内部ID
+    ├── project_name: string     # プロジェクト名
     ├── type: string (spec/memo/parameter)
     ├── content: string (元テキスト)
     ├── file_path: string
@@ -514,6 +680,147 @@ Collection: design_knowledge
 | 図面注記 | DXF/DWG から抽出した注記 |
 
 ## CLI コマンド仕様
+
+### コマンド体系
+
+```
+da <command> [subcommand] [options]
+
+# プロジェクト管理
+da project add <path>           # プロジェクトを登録
+da project list                 # プロジェクト一覧
+da project remove <name>        # プロジェクトを登録解除
+
+# 装置管理
+da asset add <name>             # 装置を追加（カレントプロジェクト）
+da asset list                   # 装置一覧
+da asset remove <name>          # 装置を削除
+
+# パーツ管理
+da part add <part-number>       # パーツを追加（カレント装置）
+da part list                    # パーツ一覧
+
+# 整合性・検証
+da check                        # ハッシュ整合性チェック
+da verify                       # 設計基準バリデーション
+da sync                         # DB同期
+
+# 手配
+da deploy                       # 手配パッケージ作成
+
+# 検索
+da search <query>               # 類似設計検索
+
+# 状態確認
+da status                       # プロジェクト状態表示
+```
+
+### da project add
+
+プロジェクトを DA 管理下に登録する。
+
+```bash
+# 既存ディレクトリを登録
+da project add C:/work/elevator-renewal
+
+# 名前を指定して登録
+da project add C:/work/elevator-renewal --name "エレベータ更新"
+
+# 新規プロジェクト作成（ディレクトリも作成）
+da project add C:/work/new-project --create
+```
+
+**出力例:**
+```
+Project registered: elevator-renewal
+  Path: C:/work/elevator-renewal
+  ID: 550e8400-e29b-41d4-a716-446655440000
+
+Created .da-project marker file.
+```
+
+### da project list
+
+登録済みプロジェクトを一覧表示する。
+
+```bash
+da project list
+
+# JSON 出力
+da project list --json
+```
+
+**出力例:**
+```
+Registered Projects:
+
+  elevator-renewal
+    Path: C:/work/elevator-renewal
+    Assets: 3
+    Parts: 45
+    Last sync: 2026-02-02 10:30:00
+
+  packaging-line-2026
+    Path: D:/projects/packaging-line-2026
+    Assets: 5
+    Parts: 120
+    Last sync: 2026-02-01 15:00:00
+
+Total: 2 projects, 8 assets, 165 parts
+```
+
+### da asset add
+
+プロジェクトに装置を追加する。
+
+```bash
+# カレントプロジェクトに装置を追加
+da asset add lifting-unit
+
+# プロジェクト指定
+da asset add lifting-unit --project elevator-renewal
+
+# 表示名を指定
+da asset add lifting-unit --display-name "昇降ユニット"
+```
+
+**出力例:**
+```
+Asset created: lifting-unit
+  Project: elevator-renewal
+  Path: C:/work/elevator-renewal/assets/lifting-unit
+  ID: 660e8400-e29b-41d4-a716-446655440001
+
+Created directories:
+  - assets/lifting-unit/
+  - assets/lifting-unit/components/
+```
+
+### da part add
+
+装置にパーツを追加する。
+
+```bash
+# カレント装置にパーツを追加
+da part add SP-2026-PLATE-01 --type Fabricated --name "昇降ベースプレート"
+
+# 装置を指定
+da part add SP-2026-PLATE-01 --asset lifting-unit --type Fabricated
+
+# メタデータ付き
+da part add SP-2026-PLATE-01 --type Fabricated --material SS400
+```
+
+**出力例:**
+```
+Part created: SP-2026-PLATE-01
+  Asset: lifting-unit
+  Type: Fabricated
+  Path: .../components/SP-2026-PLATE-01/
+
+Created:
+  - part.json
+```
 
 ### da check
 
@@ -679,46 +986,60 @@ Results:
 Found 3 similar designs
 ```
 
-### da init
+### da init（非推奨）
 
-新規プロジェクトを初期化する。
-
-```bash
-# カレントディレクトリを初期化
-da init
-
-# 指定パスを初期化
-da init --path /path/to/project
-
-# プロジェクト名指定
-da init --name "my-project"
-```
+`da project add --create` を使用してください。
 
 ### da status
 
-プロジェクトの状態を表示する。
+システム全体またはプロジェクトの状態を表示する。
 
 ```bash
+# システム全体
 da status
+
+# 特定プロジェクト
+da status --project elevator-renewal
+
+# 特定装置
+da status --project elevator-renewal --asset lifting-unit
 ```
 
-**出力例:**
+**出力例（システム全体）:**
 ```
 Design Aid Status
 
-Project: my-project
-Database: design_aid.db (last sync: 2026-02-02 10:30:00)
-Qdrant: Connected (localhost:6333)
+System:
+  Database: ~/.design-aid/design_aid.db
+  Qdrant: Connected (localhost:6333)
+
+Projects: 2
+  elevator-renewal     3 assets, 45 parts
+  packaging-line-2026  5 assets, 120 parts
+
+Total: 165 parts (Draft: 15, Ordered: 130, Delivered: 20)
+```
+
+**出力例（プロジェクト指定）:**
+```
+Project: elevator-renewal
+  Path: C:/work/elevator-renewal
+  Last sync: 2026-02-02 10:30:00
+
+Assets:
+  lifting-unit     (15 parts)
+  control-panel    (20 parts)
+  safety-system    (10 parts)
 
 Parts Summary:
-  Total: 25
+  Total: 45
   Draft: 5
-  Ordered: 18
-  Delivered: 2
+  Ordered: 35
+  Delivered: 5
 
 Recent Changes:
-  SP-2026-PLATE-01: Modified 2 hours ago (not synced)
-  SP-2026-MOTOR-01: Modified 1 day ago (synced)
+  [lifting-unit] SP-2026-PLATE-01: Modified 2 hours ago (not synced)
+  [control-panel] PLC-001: Modified 1 day ago (synced)
 ```
 
 ## ドメインモデル
@@ -850,13 +1171,22 @@ public interface IDesignStandard
 
 ## 設定項目
 
+### システムディレクトリ解決
+
+| 環境 | パス | 備考 |
+|------|------|------|
+| 本番 (Windows) | `%APPDATA%\design-aid\` | 例: `C:\Users\<user>\AppData\Roaming\design-aid\` |
+| 本番 (Linux/macOS) | `~/.design-aid/` | |
+| 開発 | `<repo>/data/` | 環境変数 `DA_DATA_DIR` で上書き可能 |
+
 ### appsettings.json
 
 ```json
 {
   "DesignAid": {
+    "SystemDirectory": null,
     "Database": {
-      "Path": "./design_aid.db"
+      "Path": "design_aid.db"
     },
     "Qdrant": {
       "Host": "localhost",
@@ -885,11 +1215,13 @@ public interface IDesignStandard
     },
     "Hashing": {
       "Algorithm": "SHA256"
-    },
-    "ComponentsPath": "./components"
+    }
   }
 }
 ```
+
+**注意**: `SystemDirectory` が `null` の場合、OS に応じたデフォルトパスを使用。
+開発時は環境変数 `DA_DATA_DIR` で `./data` を指定することを推奨。
 
 ### Embedding プロバイダー設計
 
@@ -934,6 +1266,7 @@ public class EmbeddingProviderFactory
 
 | 変数名 | 必須 | デフォルト | 説明 |
 |--------|------|-----------|------|
+| `DA_DATA_DIR` | - | OS依存 | システムディレクトリ（DB、設定の配置先） |
 | `DA_EMBEDDING_PROVIDER` | - | `OpenAI` | 使用する埋め込みプロバイダー |
 | `DA_EMBEDDING_API_KEY` | △ | - | 埋め込み API キー（プロバイダーによる） |
 | `DA_DB_PATH` | - | `./design_aid.db` | SQLite DBパス |

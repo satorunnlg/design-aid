@@ -90,3 +90,6 @@ desktop.ini
 /components/
 /deploy_*/
 migration.sql
+
+# Claude Code
+.claude/
