@@ -91,5 +91,12 @@ desktop.ini
 /deploy_*/
 migration.sql
 
+# Development data directory
+/data/*
+!/data/.gitkeep
+!/data/projects/
+/data/projects/*
+!/data/projects/.gitkeep
+
 # Claude Code
 .claude/

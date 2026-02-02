@@ -354,38 +354,62 @@ design-aid/
 ```
 プロジェクト (Project)
   └── 装置 (Asset) ※複数
-        └── 部品 (Component) ※複数
+        └── 部品 (Component) ※複数（中間テーブルで紐づけ）
+
+部品 (Component) ※共有リソース
+  - 複数の装置から参照可能
+  - データディレクトリに一元管理
 ```
 
 | 階層 | 説明 | 例 |
 |------|------|-----|
 | Project | 案件・プロジェクト単位 | `elevator-renewal`, `packaging-line-2026` |
 | Asset | プロジェクト内の装置・ユニット | `lifting-unit`, `control-panel`, `conveyor-A` |
-| Component | 手配境界となる部品 | `SP-2026-PLATE-01`, `MTR-001` |
+| Component | 手配境界となる部品（共有可能） | `SP-2026-PLATE-01`, `MTR-001` |
+
+### データディレクトリ構造
+
+部品（Component）はデータディレクトリに一元管理し、複数の装置から共有可能とする。
+
+```text
+# 開発環境（このリポジトリ内）
+design-aid/
+├── data/                           # 開発用データ
+│   ├── config.json
+│   ├── design_aid.db
+│   ├── components/                 # 部品データ（共有）
+│   │   ├── SP-2026-PLATE-01/
+│   │   │   ├── part.json           # パーツ定義
+│   │   │   ├── drawing.dxf         # 製作図面
+│   │   │   └── calculation.pdf     # 計算書
+│   │   └── MTR-001/
+│   │       ├── part.json
+│   │       └── spec.pdf            # 選定根拠
+│   └── projects/                   # プロジェクト管理
+│       └── sample-project/
+│           └── .da-project
+└── ...
+
+# 本番環境
+~/.design-aid/                      # Windows: %APPDATA%\design-aid
+├── config.json
+├── design_aid.db
+└── components/                     # 部品データ（共有）
+    └── ...
+```
 
 ### プロジェクトディレクトリ構造
 
-プロジェクトは任意の場所に配置可能。DB への登録で管理対象となる。
+プロジェクトは任意の場所に配置可能。マーカーファイルで管理。
+装置と部品の紐づけは DB の中間テーブルで管理する。
 
 ```text
 C:/work/elevator-renewal/           # 任意の場所
 ├── .da-project                     # DA管理マーカー（project_id, 登録日時）
-├── docs/                           # プロジェクト関連ドキュメント（任意）
-└── assets/                         # 装置群
-    ├── lifting-unit/               # 装置A
-    │   ├── asset.json              # 装置定義
-    │   └── components/             # 部品群
-    │       ├── SP-2026-PLATE-01/
-    │       │   ├── part.json       # パーツ定義
-    │       │   ├── drawing.dxf     # 製作図面
-    │       │   └── calculation.pdf # 計算書
-    │       └── MTR-001/
-    │           ├── part.json
-    │           └── spec.pdf        # 選定根拠
-    └── control-panel/              # 装置B
-        ├── asset.json
-        └── components/
-            └── ...
+└── docs/                           # プロジェクト関連ドキュメント（任意）
+
+# 装置・部品の関係は DB で管理
+# Project → Asset → AssetComponents → Component
 ```
 
 ### .da-project 仕様
@@ -398,24 +422,13 @@ C:/work/elevator-renewal/           # 任意の場所
 }
 ```
 
-### asset.json 仕様
-
-```json
-{
-  "id": "660e8400-e29b-41d4-a716-446655440001",
-  "name": "lifting-unit",
-  "display_name": "昇降ユニット",
-  "description": "メイン昇降機構",
-  "created_at": "2026-02-02T10:30:00Z"
-}
-```
-
 ### 手配境界（Procurement Boundary）
 
 本システムでは、以下のディレクトリ構造を「1つの部品（パーツ）」の最小単位として扱う。
+部品はデータディレクトリの `components/` に一元管理される。
 
 ```text
-/components/SP-2026-PLATE-01/
+data/components/SP-2026-PLATE-01/
   ├── part.json      # パーツ定義（手動/自動生成）
   ├── drawing.dxf    # 製作図面
   └── selection.pdf  # 選定根拠/計算書
@@ -423,10 +436,11 @@ C:/work/elevator-renewal/           # 任意の場所
 
 ### part.json 仕様
 
+**注意**: `asset_id` は持たない。装置との紐づけは DB の中間テーブル（AssetComponents）で管理。
+
 ```json
 {
   "id": "770e8400-e29b-41d4-a716-446655440002",
-  "asset_id": "660e8400-e29b-41d4-a716-446655440001",
   "part_number": "SP-2026-PLATE-01",
   "name": "昇降ベースプレート",
   "type": "Fabricated",
@@ -499,27 +513,37 @@ CREATE TABLE Assets (
 CREATE INDEX IX_Assets_ProjectId ON Assets(ProjectId);
 CREATE INDEX IX_Assets_Name ON Assets(Name);
 
--- パーツマスタ
+-- パーツマスタ（共有リソース）
 CREATE TABLE Parts (
     Id TEXT PRIMARY KEY,          -- UUID v4
-    AssetId TEXT NOT NULL,        -- Assets.Id への参照
-    PartNumber TEXT NOT NULL,     -- 型式（人間が識別する番号）
+    PartNumber TEXT NOT NULL UNIQUE, -- 型式（グローバルユニーク）
     Name TEXT NOT NULL,
     Type TEXT NOT NULL,           -- Fabricated/Purchased/Standard
     Version TEXT NOT NULL,
     CurrentHash TEXT NOT NULL,    -- 最新の成果物ハッシュ（結合）
-    DirectoryPath TEXT NOT NULL,
+    DirectoryPath TEXT NOT NULL,  -- data/components/xxx への相対パス
     MetaDataJson TEXT,            -- JSON 形式のメタデータ
     CreatedAt TEXT NOT NULL,
-    UpdatedAt TEXT NOT NULL,
-    FOREIGN KEY (AssetId) REFERENCES Assets(Id),
-    UNIQUE (AssetId, PartNumber)  -- 同一装置内でユニーク
+    UpdatedAt TEXT NOT NULL
 );
 
--- インデックス
-CREATE INDEX IX_Parts_AssetId ON Parts(AssetId);
 CREATE INDEX IX_Parts_PartNumber ON Parts(PartNumber);
 CREATE INDEX IX_Parts_Type ON Parts(Type);
+
+-- 装置-部品 中間テーブル（多対多）
+CREATE TABLE AssetComponents (
+    AssetId TEXT NOT NULL,        -- Assets.Id への参照
+    PartId TEXT NOT NULL,         -- Parts.Id への参照
+    Quantity INTEGER DEFAULT 1,   -- 使用数量
+    Notes TEXT,                   -- 備考（この装置での用途など）
+    CreatedAt TEXT NOT NULL,
+    PRIMARY KEY (AssetId, PartId),
+    FOREIGN KEY (AssetId) REFERENCES Assets(Id) ON DELETE CASCADE,
+    FOREIGN KEY (PartId) REFERENCES Parts(Id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IX_AssetComponents_AssetId ON AssetComponents(AssetId);
+CREATE INDEX IX_AssetComponents_PartId ON AssetComponents(PartId);
 
 -- 手配履歴
 CREATE TABLE HandoverHistory (
