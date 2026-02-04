@@ -38,7 +38,10 @@ public class Program
             new SearchCommand(),
 
             // バックアップ
-            new BackupCommand()
+            new BackupCommand(),
+
+            // ツール管理
+            new UpdateCommand()
         };
 
         // バージョン表示
