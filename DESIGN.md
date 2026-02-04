@@ -50,7 +50,7 @@ AWS CDK の思想を機械設計に適用し、**手配境界**を抽象化の�
 │                                                                   │
 │  ┌─────────────────────────────────────────────────────────────┐ │
 │  │                      CLI Layer                                │ │
-│  │   da check │ da verify │ da sync │ da deploy │ da search     │ │
+│  │   daid check │ daid verify │ daid sync │ daid deploy │ daid search │ │
 │  └─────────────────────────┬───────────────────────────────────┘ │
 │                            │                                      │
 │  ┌─────────────────────────▼───────────────────────────────────┐ │
@@ -103,26 +103,25 @@ design-aid/
 ├── src/
 │   └── DesignAid/
 │       ├── Commands/                      # CLI コマンド定義
-│       │   ├── Project/                   # プロジェクト管理
-│       │   │   ├── ProjectAddCommand.cs
-│       │   │   ├── ProjectListCommand.cs
-│       │   │   └── ProjectRemoveCommand.cs
 │       │   ├── Asset/                     # 装置管理
 │       │   │   ├── AssetAddCommand.cs
 │       │   │   ├── AssetListCommand.cs
-│       │   │   └── AssetRemoveCommand.cs
+│       │   │   ├── AssetRemoveCommand.cs
+│       │   │   └── AssetLinkCommand.cs    # 子装置組み込み
 │       │   ├── Part/                      # パーツ管理
 │       │   │   ├── PartAddCommand.cs
-│       │   │   └── PartListCommand.cs
-│       │   ├── CheckCommand.cs            # da check
-│       │   ├── VerifyCommand.cs           # da verify
-│       │   ├── SyncCommand.cs             # da sync
-│       │   ├── DeployCommand.cs           # da deploy
-│       │   ├── SearchCommand.cs           # da search
-│       │   └── StatusCommand.cs           # da status
+│       │   │   ├── PartListCommand.cs
+│       │   │   └── PartLinkCommand.cs     # 装置へパーツ紐づけ
+│       │   ├── CheckCommand.cs            # daid check
+│       │   ├── VerifyCommand.cs           # daid verify
+│       │   ├── SyncCommand.cs             # daid sync
+│       │   ├── DeployCommand.cs           # daid deploy
+│       │   ├── SearchCommand.cs           # daid search
+│       │   ├── StatusCommand.cs           # daid status
+│       │   ├── BackupCommand.cs           # daid backup
+│       │   └── UpdateCommand.cs           # daid update
 │       ├── Domain/                        # ドメインモデル
 │       │   ├── Entities/
-│       │   │   ├── Project.cs             # プロジェクト
 │       │   │   ├── Asset.cs               # 装置
 │       │   │   ├── DesignComponent.cs     # パーツ基底クラス
 │       │   │   ├── FabricatedPart.cs      # 製作物
@@ -141,7 +140,6 @@ design-aid/
 │       │       └── ToleranceStandard.cs   # 公差基準
 │       ├── Application/                   # アプリケーションサービス
 │       │   ├── Services/
-│       │   │   ├── ProjectService.cs      # プロジェクト管理
 │       │   │   ├── AssetService.cs        # 装置管理
 │       │   │   ├── PartService.cs         # パーツ管理
 │       │   │   ├── HashService.cs         # ハッシュ計算・検証
@@ -150,7 +148,6 @@ design-aid/
 │       │   │   ├── DeployService.cs       # 手配パッケージ作成
 │       │   │   └── SearchService.cs       # 類似設計検索
 │       │   └── DTOs/
-│       │       ├── ProjectDto.cs
 │       │       ├── AssetDto.cs
 │       │       ├── PartDto.cs
 │       │       ├── CheckResultDto.cs
@@ -159,7 +156,6 @@ design-aid/
 │       │   ├── Persistence/
 │       │   │   ├── DesignAidDbContext.cs  # EF Core DbContext
 │       │   │   ├── Configurations/        # エンティティ設定
-│       │   │   │   ├── ProjectConfiguration.cs
 │       │   │   │   ├── AssetConfiguration.cs
 │       │   │   │   ├── PartConfiguration.cs
 │       │   │   │   └── HandoverConfiguration.cs
@@ -168,7 +164,6 @@ design-aid/
 │       │   │   ├── QdrantService.cs       # Qdrant クライアント
 │       │   │   └── EmbeddingService.cs    # ベクトル化サービス
 │       │   └── FileSystem/
-│       │       ├── ProjectMarkerService.cs # .da-project 管理
 │       │       ├── AssetJsonReader.cs     # asset.json 読み書き
 │       │       ├── PartJsonReader.cs      # part.json 読み書き
 │       │       └── ArtifactScanner.cs     # 成果物スキャン
@@ -180,12 +175,10 @@ design-aid/
 ├── tests/
 │   └── DesignAid.Tests/
 │       ├── Domain/
-│       │   ├── ProjectTests.cs
 │       │   ├── AssetTests.cs
 │       │   ├── DesignComponentTests.cs
 │       │   └── FileHashTests.cs
 │       ├── Application/
-│       │   ├── ProjectServiceTests.cs
 │       │   ├── AssetServiceTests.cs
 │       │   ├── HashServiceTests.cs
 │       │   ├── ValidationServiceTests.cs
@@ -197,13 +190,12 @@ design-aid/
 ├── data/                                  # 開発用データディレクトリ
 │   ├── config.json                        # 開発用設定
 │   ├── design_aid.db                      # 開発用DB（gitignore）
-│   └── projects/                          # サンプルプロジェクト
-│       └── sample-project/
-│           ├── .da-project
-│           └── assets/
-│               └── sample-asset/
-│                   ├── asset.json
-│                   └── components/
+│   ├── assets/                            # 装置
+│   │   └── sample-asset/
+│   │       └── asset.json
+│   └── components/                        # 部品
+│       └── SP-2026-PLATE-01/
+│           └── part.json
 ├── docker-compose.yml                     # Qdrant 起動用
 ├── appsettings.json                       # 設定ファイル
 ├── appsettings.Development.json           # 開発用設定（DA_DATA_DIR=./data）
@@ -329,13 +321,18 @@ dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 
 ### システムディレクトリ
 
-Design Aid はシステムディレクトリに設定と統合DBを配置し、複数プロジェクトを横断管理する。
+Design Aid はシステムディレクトリに設定・DB・装置・部品を一元管理する。
+「物」がトップに来る設計思想に基づき、Asset（装置）と Component（部品）を中心に構成。
 
 ```text
 # 本番環境
 ~/.design-aid/                      # Windows: %APPDATA%\design-aid
 ├── config.json                     # グローバル設定
-└── design_aid.db                   # 統合DB（全プロジェクト）
+├── design_aid.db                   # 統合DB
+├── assets/                         # 装置（トップレベル）
+│   └── ...
+└── components/                     # 部品（共有リソース）
+    └── ...
 
 # 開発環境（このリポジトリ内）
 design-aid/
@@ -344,17 +341,21 @@ design-aid/
 ├── data/                           # 開発用データ
 │   ├── config.json
 │   ├── design_aid.db
-│   └── projects/                   # サンプルプロジェクト
-│       └── sample-project/
+│   ├── assets/                     # 装置
+│   │   └── lifting-unit/
+│   │       └── asset.json
+│   └── components/                 # 部品
+│       └── SP-2026-PLATE-01/
+│           └── part.json
 └── ...
 ```
 
 ### 階層構造
 
 ```
-プロジェクト (Project)
-  └── 装置 (Asset) ※複数
-        └── 部品 (Component) ※複数（中間テーブルで紐づけ）
+装置 (Asset) ※トップレベル
+  ├── 部品 (Component) ※複数（中間テーブルで紐づけ）
+  └── 子装置 (SubAsset) ※別のAssetを組み込み可能
 
 部品 (Component) ※共有リソース
   - 複数の装置から参照可能
@@ -363,64 +364,54 @@ design-aid/
 
 | 階層 | 説明 | 例 |
 |------|------|-----|
-| Project | 案件・プロジェクト単位 | `elevator-renewal`, `packaging-line-2026` |
-| Asset | プロジェクト内の装置・ユニット | `lifting-unit`, `control-panel`, `conveyor-A` |
+| Asset | 装置・ユニット（トップレベル） | `lifting-unit`, `control-panel`, `conveyor-A` |
 | Component | 手配境界となる部品（共有可能） | `SP-2026-PLATE-01`, `MTR-001` |
+| SubAsset | 別の装置の組み込み（再利用） | `safety-module`（既存Assetを参照） |
+
+**特徴:**
+- Asset は Component（部品）を持つ
+- Asset は別の Asset を SubAsset として組み込み可能（過去の装置の再利用）
+- Component は複数の Asset から共有参照可能
 
 ### データディレクトリ構造
 
-部品（Component）はデータディレクトリに一元管理し、複数の装置から共有可能とする。
+装置（Asset）と部品（Component）はデータディレクトリに一元管理する。
 
 ```text
-# 開発環境（このリポジトリ内）
-design-aid/
-├── data/                           # 開発用データ
-│   ├── config.json
-│   ├── design_aid.db
-│   ├── components/                 # 部品データ（共有）
-│   │   ├── SP-2026-PLATE-01/
-│   │   │   ├── part.json           # パーツ定義
-│   │   │   ├── drawing.dxf         # 製作図面
-│   │   │   └── calculation.pdf     # 計算書
-│   │   └── MTR-001/
-│   │       ├── part.json
-│   │       └── spec.pdf            # 選定根拠
-│   └── projects/                   # プロジェクト管理
-│       └── sample-project/
-│           └── .da-project
-└── ...
-
-# 本番環境
-~/.design-aid/                      # Windows: %APPDATA%\design-aid
-├── config.json
-├── design_aid.db
-└── components/                     # 部品データ（共有）
-    └── ...
+data/
+├── config.json                     # 設定ファイル
+├── design_aid.db                   # SQLite DB
+├── assets/                         # 装置（トップレベル）
+│   ├── lifting-unit/
+│   │   └── asset.json              # 装置定義
+│   ├── control-panel/
+│   │   └── asset.json
+│   └── safety-module/              # 他の装置から組み込み可能
+│       └── asset.json
+└── components/                     # 部品（共有リソース）
+    ├── SP-2026-PLATE-01/
+    │   ├── part.json               # パーツ定義
+    │   ├── drawing.dxf             # 製作図面
+    │   └── calculation.pdf         # 計算書
+    └── MTR-001/
+        ├── part.json
+        └── spec.pdf                # 選定根拠
 ```
 
-### プロジェクトディレクトリ構造
-
-プロジェクトは任意の場所に配置可能。マーカーファイルで管理。
-装置と部品の紐づけは DB の中間テーブルで管理する。
-
-```text
-C:/work/elevator-renewal/           # 任意の場所
-├── .da-project                     # DA管理マーカー（project_id, 登録日時）
-└── docs/                           # プロジェクト関連ドキュメント（任意）
-
-# 装置・部品の関係は DB で管理
-# Project → Asset → AssetComponents → Component
-```
-
-### .da-project 仕様
+### asset.json 仕様
 
 ```json
 {
-  "project_id": "550e8400-e29b-41d4-a716-446655440000",
-  "name": "elevator-renewal",
-  "registered_at": "2026-02-02T10:30:00Z"
+  "id": "660e8400-e29b-41d4-a716-446655440001",
+  "name": "lifting-unit",
+  "display_name": "昇降ユニット",
+  "description": "エレベータ更新案件の昇降機構",
+  "created_at": "2026-02-02T10:30:00Z"
 }
 ```
+
+**注意**: 部品との紐づけは DB の中間テーブル（AssetComponents）で管理。
+子装置との紐づけは DB の中間テーブル（AssetSubAssets）で管理。
 
 ### 手配境界（Procurement Boundary）
 
@@ -466,7 +457,7 @@ data/components/SP-2026-PLATE-01/
 | `id` | UUID v4 | 内部データ管理、DB主キー、一意識別 | `550e8400-e29b-41d4-a716-446655440000` |
 | `part_number` | 英数字記号 | 人間が識別する型式、図面番号 | `SP-2026-PLATE-01`, `ABC-123_REV2` |
 
-- `id` は自動生成（`da init` 時に UUID を発行）
+- `id` は自動生成（`daid init` 時に UUID を発行）
 - `part_number` はユーザーが任意に設定（必須、ユニーク制約あり）
 - CLI 出力では `part_number` を表示（`--show-id` で UUID も表示）
 
@@ -483,34 +474,17 @@ data/components/SP-2026-PLATE-01/
 ### テーブル定義
 
 ```sql
--- プロジェクトマスタ
-CREATE TABLE Projects (
+-- 装置マスタ（トップレベル）
+CREATE TABLE Assets (
     Id TEXT PRIMARY KEY,          -- UUID v4
-    Name TEXT NOT NULL UNIQUE,    -- プロジェクト名（ディレクトリ名）
+    Name TEXT NOT NULL UNIQUE,    -- 装置名（ディレクトリ名、グローバルユニーク）
     DisplayName TEXT,             -- 表示名
-    DirectoryPath TEXT NOT NULL,  -- プロジェクトディレクトリの絶対パス
     Description TEXT,
+    DirectoryPath TEXT NOT NULL,  -- data/assets/xxx への相対パス
     CreatedAt TEXT NOT NULL,
     UpdatedAt TEXT NOT NULL
 );
 
-CREATE INDEX IX_Projects_Name ON Projects(Name);
-
--- 装置マスタ
-CREATE TABLE Assets (
-    Id TEXT PRIMARY KEY,          -- UUID v4
-    ProjectId TEXT NOT NULL,      -- Projects.Id への参照
-    Name TEXT NOT NULL,           -- 装置名（ディレクトリ名）
-    DisplayName TEXT,             -- 表示名
-    Description TEXT,
-    DirectoryPath TEXT NOT NULL,  -- 装置ディレクトリの絶対パス
-    CreatedAt TEXT NOT NULL,
-    UpdatedAt TEXT NOT NULL,
-    FOREIGN KEY (ProjectId) REFERENCES Projects(Id),
-    UNIQUE (ProjectId, Name)
-);
-
-CREATE INDEX IX_Assets_ProjectId ON Assets(ProjectId);
 CREATE INDEX IX_Assets_Name ON Assets(Name);
 
 -- パーツマスタ（共有リソース）
@@ -544,6 +518,22 @@ CREATE TABLE AssetComponents (
 
 CREATE INDEX IX_AssetComponents_AssetId ON AssetComponents(AssetId);
 CREATE INDEX IX_AssetComponents_PartId ON AssetComponents(PartId);
+
+-- 装置-子装置 中間テーブル（Asset の入れ子・再利用）
+CREATE TABLE AssetSubAssets (
+    ParentAssetId TEXT NOT NULL,  -- 親装置の Assets.Id
+    ChildAssetId TEXT NOT NULL,   -- 子装置の Assets.Id（組み込まれる装置）
+    Quantity INTEGER DEFAULT 1,   -- 使用数量
+    Notes TEXT,                   -- 備考（この装置での用途など）
+    CreatedAt TEXT NOT NULL,
+    PRIMARY KEY (ParentAssetId, ChildAssetId),
+    FOREIGN KEY (ParentAssetId) REFERENCES Assets(Id) ON DELETE CASCADE,
+    FOREIGN KEY (ChildAssetId) REFERENCES Assets(Id) ON DELETE RESTRICT,
+    CHECK (ParentAssetId != ChildAssetId)  -- 自己参照禁止
+);
+
+CREATE INDEX IX_AssetSubAssets_ParentAssetId ON AssetSubAssets(ParentAssetId);
+CREATE INDEX IX_AssetSubAssets_ChildAssetId ON AssetSubAssets(ChildAssetId);
 
 -- 手配履歴
 CREATE TABLE HandoverHistory (
@@ -618,7 +608,7 @@ dotnet ef migrations script --project src/DesignAid -o migration.sql
 1. **命名規則**: `YYYYMMDD_説明` 形式（例: `20260202_AddPartNumberIndex`）
 2. **1マイグレーション1変更**: 小さな単位で作成し、追跡を容易に
 3. **データ保持**: カラム削除前に必ずデータ移行を検討
-4. **テスト**: マイグレーション後に `da check` で整合性確認
+4. **テスト**: マイグレーション後に `daid check` で整合性確認
 
 ### 破壊的変更の手順
 
@@ -658,10 +648,10 @@ public partial class RenamePartIdToId : Migration
 
 ```bash
 # ベクトルデータを再生成
-da sync --include-vectors --force
+daid sync --include-vectors --force
 
 # コレクションを再作成（破壊的）
-da sync --recreate-collection
+daid sync --recreate-collection
 ```
 
 ### バックアップ戦略
@@ -708,131 +698,122 @@ Collection: design_knowledge
 ### コマンド体系
 
 ```
-da <command> [subcommand] [options]
-
-# プロジェクト管理
-da project add <path>           # プロジェクトを登録
-da project list                 # プロジェクト一覧
-da project remove <name>        # プロジェクトを登録解除
+daid <command> [subcommand] [options]
 
 # 装置管理
-da asset add <name>             # 装置を追加（カレントプロジェクト）
-da asset list                   # 装置一覧
-da asset remove <name>          # 装置を削除
+daid asset add <name>             # 装置を追加
+daid asset list                   # 装置一覧
+daid asset remove <name>          # 装置を削除
+daid asset link <parent> <child>  # 子装置を組み込み（SubAsset）
 
 # パーツ管理
-da part add <part-number>       # パーツを追加（カレント装置）
-da part list                    # パーツ一覧
+daid part add <part-number>       # パーツを追加
+daid part list                    # パーツ一覧
+daid part link <asset> <part>     # 装置にパーツを紐づけ
 
 # 整合性・検証
-da check                        # ハッシュ整合性チェック
-da verify                       # 設計基準バリデーション
-da sync                         # DB同期
+daid check                        # ハッシュ整合性チェック
+daid verify                       # 設計基準バリデーション
+daid sync                         # DB同期
 
 # 手配
-da deploy                       # 手配パッケージ作成
+daid deploy                       # 手配パッケージ作成
 
 # 検索
-da search <query>               # 類似設計検索
+daid search <query>               # 類似設計検索
 
 # 状態確認
-da status                       # プロジェクト状態表示
+daid status                       # システム状態表示
+
+# バックアップ
+daid backup                       # データバックアップ（S3/ZIP）
+
+# ツール管理
+daid update                       # ツールを最新版に更新
 ```
 
-### da project add
+### daid asset add
 
-プロジェクトを DA 管理下に登録する。
+装置を追加する。
 
 ```bash
-# 既存ディレクトリを登録
-da project add C:/work/elevator-renewal
-
-# 名前を指定して登録
-da project add C:/work/elevator-renewal --name "エレベータ更新"
-
-# 新規プロジェクト作成（ディレクトリも作成）
-da project add C:/work/new-project --create
-```
-
-**出力例:**
-```
-Project registered: elevator-renewal
-  Path: C:/work/elevator-renewal
-  ID: 550e8400-e29b-41d4-a716-446655440000
-
-Created .da-project marker file.
-```
-
-### da project list
-
-登録済みプロジェクトを一覧表示する。
-
-```bash
-da project list
-
-# JSON 出力
-da project list --json
-```
-
-**出力例:**
-```
-Registered Projects:
-
-  elevator-renewal
-    Path: C:/work/elevator-renewal
-    Assets: 3
-    Parts: 45
-    Last sync: 2026-02-02 10:30:00
-
-  packaging-line-2026
-    Path: D:/projects/packaging-line-2026
-    Assets: 5
-    Parts: 120
-    Last sync: 2026-02-01 15:00:00
-
-Total: 2 projects, 8 assets, 165 parts
-```
-
-### da asset add
-
-プロジェクトに装置を追加する。
-
-```bash
-# カレントプロジェクトに装置を追加
-da asset add lifting-unit
-
-# プロジェクト指定
-da asset add lifting-unit --project elevator-renewal
+# 装置を追加
+daid asset add lifting-unit
 
 # 表示名を指定
-da asset add lifting-unit --display-name "昇降ユニット"
+daid asset add lifting-unit --display-name "昇降ユニット"
+
+# 説明を指定
+daid asset add lifting-unit --description "エレベータ更新案件の昇降機構"
 ```
 
 **出力例:**
 ```
 Asset created: lifting-unit
-  Project: elevator-renewal
-  Path: C:/work/elevator-renewal/assets/lifting-unit
+  Path: data/assets/lifting-unit
   ID: 660e8400-e29b-41d4-a716-446655440001
-
-Created directories:
-  - assets/lifting-unit/
-  - assets/lifting-unit/components/
 ```
 
-### da part add
+### daid asset list
+
+登録済み装置を一覧表示する。
+
+```bash
+daid asset list
+
+# JSON 出力
+daid asset list --json
+```
+
+**出力例:**
+```
+Assets:
+
+  lifting-unit (昇降ユニット)
+    ID: 660e8400-e29b-41d4-a716-446655440001
+    Parts: 15
+    SubAssets: 1
+
+  control-panel (制御盤)
+    ID: 660e8400-e29b-41d4-a716-446655440002
+    Parts: 20
+    SubAssets: 0
+
+Total: 2 assets, 35 parts
+```
+
+### daid asset link
+
+別の装置を子装置として組み込む（SubAsset）。
+
+```bash
+# lifting-unit に safety-module を組み込む
+daid asset link lifting-unit safety-module
+
+# 数量と備考を指定
+daid asset link lifting-unit safety-module --quantity 2 --notes "冗長構成"
+```
+
+**出力例:**
+```
+SubAsset linked: safety-module -> lifting-unit
+  Quantity: 2
+  Notes: 冗長構成
+```
+
+### daid part add
 
 装置にパーツを追加する。
 
 ```bash
 # カレント装置にパーツを追加
-da part add SP-2026-PLATE-01 --type Fabricated --name "昇降ベースプレート"
+daid part add SP-2026-PLATE-01 --type Fabricated --name "昇降ベースプレート"
 
 # 装置を指定
-da part add SP-2026-PLATE-01 --asset lifting-unit --type Fabricated
+daid part add SP-2026-PLATE-01 --asset lifting-unit --type Fabricated
 
 # メタデータ付き
-da part add SP-2026-PLATE-01 --type Fabricated --material SS400
+daid part add SP-2026-PLATE-01 --type Fabricated --material SS400
 ```
 
 **出力例:**
@@ -846,19 +827,19 @@ Created:
   - part.json
 ```
 
-### da check
+### daid check
 
 ファイルハッシュの整合性を検証する。
 
 ```bash
 # カレントディレクトリをチェック
-da check
+daid check
 
 # 特定パスをチェック
-da check --path /path/to/project
+daid check --path /path/to/project
 
 # JSON 出力
-da check --json
+daid check --json
 ```
 
 **出力例:**
@@ -880,19 +861,19 @@ Checking design integrity...
 Summary: 1 OK, 1 Warning, 1 Error
 ```
 
-### da verify
+### daid verify
 
 設計基準に基づくバリデーションを実行する。
 
 ```bash
 # 全パーツを検証
-da verify
+daid verify
 
 # 特定パーツを検証
-da verify --part SP-2026-PLATE-01
+daid verify --part SP-2026-PLATE-01
 
 # 特定基準のみ検証
-da verify --standard STD-MATERIAL-01
+daid verify --standard STD-MATERIAL-01
 ```
 
 **出力例:**
@@ -910,19 +891,19 @@ Verifying against design standards...
 Summary: 1 Pass, 1 Fail
 ```
 
-### da sync
+### daid sync
 
 ファイルシステムと SQLite/Qdrant を同期する。
 
 ```bash
 # 同期実行
-da sync
+daid sync
 
 # ドライラン（変更確認のみ）
-da sync --dry-run
+daid sync --dry-run
 
 # Qdrant への同期も含む
-da sync --include-vectors
+daid sync --include-vectors
 ```
 
 **出力例:**
@@ -941,19 +922,19 @@ Syncing design data...
 Sync complete: 1 new, 1 updated, 1 deleted
 ```
 
-### da deploy
+### daid deploy
 
 手配パッケージを作成する。
 
 ```bash
 # 変更があるパーツの手配パッケージを作成
-da deploy
+daid deploy
 
 # 特定パーツのみ
-da deploy --part SP-2026-PLATE-01
+daid deploy --part SP-2026-PLATE-01
 
 # 出力先指定
-da deploy --output /path/to/output
+daid deploy --output /path/to/output
 ```
 
 **出力例:**
@@ -976,19 +957,19 @@ Output: ./deploy_2026-02-02/
 Mark these parts as ordered? [y/N]
 ```
 
-### da search
+### daid search
 
 類似設計をベクトル検索する。
 
 ```bash
 # キーワード検索
-da search "昇降機構 SS400"
+daid search "昇降機構 SS400"
 
 # 類似度閾値指定
-da search "ベアリング選定" --threshold 0.8
+daid search "ベアリング選定" --threshold 0.8
 
 # 上位N件
-da search "モーター" --top 5
+daid search "モーター" --top 5
 ```
 
 **出力例:**
@@ -1010,23 +991,23 @@ Results:
 Found 3 similar designs
 ```
 
-### da init（非推奨）
+### daid init（非推奨）
 
-`da project add --create` を使用してください。
+`daid project add --create` を使用してください。
 
-### da status
+### daid status
 
 システム全体またはプロジェクトの状態を表示する。
 
 ```bash
 # システム全体
-da status
+daid status
 
 # 特定プロジェクト
-da status --project elevator-renewal
+daid status --project elevator-renewal
 
 # 特定装置
-da status --project elevator-renewal --asset lifting-unit
+daid status --project elevator-renewal --asset lifting-unit
 ```
 
 **出力例（システム全体）:**
@@ -1416,24 +1397,24 @@ public class HashServiceTests
 1. Entity Framework Core セットアップ
 2. SQLite マイグレーション
 3. パーツ CRUD 操作
-4. `da init`, `da status` コマンド
+4. `daid init`, `daid status` コマンド
 
 #### フェーズ3: コア機能
-1. `da check` コマンド（ハッシュ検証）
-2. `da sync` コマンド（DB同期）
+1. `daid check` コマンド（ハッシュ検証）
+2. `daid sync` コマンド（DB同期）
 3. 手配履歴管理
-4. `da deploy` コマンド
+4. `daid deploy` コマンド
 
 #### フェーズ4: 知見検索
 1. Qdrant 連携
 2. ベクトル化サービス
-3. `da search` コマンド
+3. `daid search` コマンド
 4. 類似設計の推薦
 
 #### フェーズ5: 設計基準
 1. IDesignStandard インターフェース
 2. 材料基準、公差基準の実装
-3. `da verify` コマンド
+3. `daid verify` コマンド
 4. カスタム基準の追加機能
 
 #### フェーズ6: 将来拡張（GUI）

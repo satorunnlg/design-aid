@@ -12,23 +12,17 @@ public class AssetAddCommand : Command
     public AssetAddCommand() : base("add", "装置を追加")
     {
         this.Add(new Argument<string>("name", "装置名"));
-        this.Add(new Option<string?>("--project", "プロジェクトパス（省略時はカレントから検出）"));
         this.Add(new Option<string?>("--display-name", "表示名"));
+        this.Add(new Option<string?>("--description", "説明"));
 
         this.Handler = CommandHandler.Create<string, string?, string?>(ExecuteAsync);
     }
 
-    private static async Task ExecuteAsync(string name, string? project, string? displayName)
+    private static async Task ExecuteAsync(string name, string? displayName, string? description)
     {
-        var (resolvedPath, error) = CommandHelper.ResolveProjectPath(project);
-        if (resolvedPath == null)
-        {
-            Console.Error.WriteLine($"[ERROR] {error}");
-            Environment.ExitCode = 1;
-            return;
-        }
+        var assetsDir = CommandHelper.GetAssetsDirectory();
+        var assetPath = Path.Combine(assetsDir, name);
 
-        var assetPath = Path.Combine(resolvedPath, "assets", name);
         var assetJsonReader = new AssetJsonReader();
         if (Directory.Exists(assetPath) && assetJsonReader.Exists(assetPath))
         {
@@ -37,9 +31,12 @@ public class AssetAddCommand : Command
             return;
         }
 
+        // 装置ディレクトリを作成
         Directory.CreateDirectory(assetPath);
+
+        // asset.json を作成
         var assetId = Guid.NewGuid();
-        await assetJsonReader.CreateAsync(assetPath, assetId, name, displayName ?? name, "");
+        await assetJsonReader.CreateAsync(assetPath, assetId, name, displayName ?? name, description ?? "");
 
         Console.WriteLine();
         Console.WriteLine($"Asset created: {name}");

@@ -3,45 +3,56 @@ using System.CommandLine.NamingConventionBinder;
 using System.Text.Json;
 using DesignAid.Infrastructure.FileSystem;
 
-namespace DesignAid.Commands.Part;
+namespace DesignAid.Commands.Asset;
 
 /// <summary>
-/// パーツを装置に紐付けるコマンド。
+/// 子装置を親装置にリンクするコマンド（SubAsset）。
 /// </summary>
-public class PartLinkCommand : Command
+public class AssetLinkCommand : Command
 {
-    public PartLinkCommand() : base("link", "パーツを装置に紐付け")
+    public AssetLinkCommand() : base("link", "子装置を親装置にリンク")
     {
-        this.Add(new Argument<string>("part-number", "型式"));
-        this.Add(new Option<string>("--asset", "装置名") { IsRequired = true });
+        this.Add(new Argument<string>("parent-asset", "親装置名"));
+        this.Add(new Option<string>("--child", "子装置名") { IsRequired = true });
         this.Add(new Option<int>("--quantity", () => 1, "数量"));
+        this.Add(new Option<string?>("--notes", "備考"));
 
-        this.Handler = CommandHandler.Create<string, string, int>(Execute);
+        this.Handler = CommandHandler.Create<string, string, int, string?>(Execute);
     }
 
-    private static void Execute(string partNumber, string asset, int quantity)
+    private static void Execute(string parentAsset, string child, int quantity, string? notes)
     {
         var assetsDir = CommandHelper.GetAssetsDirectory();
-        var assetPath = Path.Combine(assetsDir, asset);
         var assetJsonReader = new AssetJsonReader();
-        if (!assetJsonReader.Exists(assetPath))
+
+        // 親装置の存在チェック
+        var parentPath = Path.Combine(assetsDir, parentAsset);
+        if (!assetJsonReader.Exists(parentPath))
         {
-            Console.Error.WriteLine($"[ERROR] 装置が見つかりません: {asset}");
+            Console.Error.WriteLine($"[ERROR] 親装置が見つかりません: {parentAsset}");
             Environment.ExitCode = 1;
             return;
         }
 
-        var partPath = Path.Combine(CommandHelper.GetComponentsDirectory(), partNumber);
-        var partJsonReader = new PartJsonReader();
-        if (!partJsonReader.Exists(partPath))
+        // 子装置の存在チェック
+        var childPath = Path.Combine(assetsDir, child);
+        if (!assetJsonReader.Exists(childPath))
         {
-            Console.Error.WriteLine($"[ERROR] パーツが見つかりません: {partNumber}");
+            Console.Error.WriteLine($"[ERROR] 子装置が見つかりません: {child}");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // 自分自身へのリンク禁止
+        if (parentAsset.Equals(child, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine("[ERROR] 自分自身を子装置として追加できません");
             Environment.ExitCode = 1;
             return;
         }
 
         // asset_links.json を読み込み（または新規作成）
-        var linksPath = Path.Combine(assetPath, "asset_links.json");
+        var linksPath = Path.Combine(parentPath, "asset_links.json");
         var links = new AssetLinksJson { Parts = new List<PartLinkEntry>(), ChildAssets = new List<ChildAssetEntry>() };
 
         if (File.Exists(linksPath))
@@ -59,27 +70,34 @@ public class PartLinkCommand : Command
             }
         }
 
-        // 既存のパーツリンクチェック
-        var existingPart = links.Parts!.FirstOrDefault(p =>
-            p.PartNumber.Equals(partNumber, StringComparison.OrdinalIgnoreCase));
+        // 既存の子装置チェック
+        var existingChild = links.ChildAssets!.FirstOrDefault(c =>
+            c.ChildAssetName.Equals(child, StringComparison.OrdinalIgnoreCase));
 
-        if (existingPart != null)
+        if (existingChild != null)
         {
             // 既存の場合は数量を更新
-            existingPart.Quantity = quantity;
-            Console.WriteLine($"Part link updated: {partNumber} in {asset}");
+            existingChild.Quantity = quantity;
+            existingChild.Notes = notes;
+            Console.WriteLine($"Child asset updated: {child} in {parentAsset}");
             Console.WriteLine($"  Quantity: {quantity}");
         }
         else
         {
             // 新規追加
-            links.Parts!.Add(new PartLinkEntry
+            links.ChildAssets!.Add(new ChildAssetEntry
             {
-                PartNumber = partNumber,
-                Quantity = quantity
+                ChildAssetName = child,
+                Quantity = quantity,
+                Notes = notes
             });
-            Console.WriteLine($"Part linked: {partNumber} -> {asset}");
+            Console.WriteLine($"Child asset linked: {child} -> {parentAsset}");
             Console.WriteLine($"  Quantity: {quantity}");
+        }
+
+        if (!string.IsNullOrEmpty(notes))
+        {
+            Console.WriteLine($"  Notes: {notes}");
         }
 
         // asset_links.json を保存

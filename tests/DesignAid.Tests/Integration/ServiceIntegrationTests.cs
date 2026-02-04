@@ -15,7 +15,6 @@ public class ServiceIntegrationTests : IDisposable
 {
     private readonly string _testRoot;
     private readonly HashService _hashService;
-    private readonly ProjectMarkerService _projectMarkerService;
     private readonly AssetJsonReader _assetJsonReader;
     private readonly PartJsonReader _partJsonReader;
 
@@ -25,7 +24,6 @@ public class ServiceIntegrationTests : IDisposable
         Directory.CreateDirectory(_testRoot);
 
         _hashService = new HashService();
-        _projectMarkerService = new ProjectMarkerService();
         _assetJsonReader = new AssetJsonReader();
         _partJsonReader = new PartJsonReader();
     }
@@ -39,24 +37,14 @@ public class ServiceIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// プロジェクト作成 → 装置追加 → パーツ追加 → ハッシュ検証の一連のフローをテスト。
+    /// 装置追加 → パーツ追加 → ハッシュ検証の一連のフローをテスト。
     /// </summary>
     [Fact]
-    public async Task FullWorkflow_CreateProjectAndValidateIntegrity()
+    public async Task FullWorkflow_CreateAssetAndValidateIntegrity()
     {
-        // === 1. プロジェクト作成 ===
-        var projectPath = Path.Combine(_testRoot, "test-project");
-        Directory.CreateDirectory(projectPath);
-
-        var projectId = Guid.NewGuid();
-        var projectMarker = await _projectMarkerService.CreateAsync(
-            projectPath, projectId, "test-project");
-
-        Assert.Equal(projectId, projectMarker.ProjectId);
-        Assert.True(_projectMarkerService.Exists(projectPath));
-
-        // === 2. 装置追加 ===
-        var assetPath = Path.Combine(projectPath, "assets", "unit-a");
+        // === 1. 装置追加 ===
+        var assetsDir = Path.Combine(_testRoot, "assets");
+        var assetPath = Path.Combine(assetsDir, "unit-a");
         Directory.CreateDirectory(assetPath);
 
         var assetId = Guid.NewGuid();
@@ -65,10 +53,10 @@ public class ServiceIntegrationTests : IDisposable
 
         Assert.Equal(assetId, assetJson.Id);
         Assert.True(_assetJsonReader.Exists(assetPath));
-        Assert.True(Directory.Exists(Path.Combine(assetPath, "components")));
 
-        // === 3. パーツ追加 ===
-        var partPath = Path.Combine(assetPath, "components", "SP-001");
+        // === 2. パーツ追加 ===
+        var componentsDir = Path.Combine(_testRoot, "components");
+        var partPath = Path.Combine(componentsDir, "SP-001");
         Directory.CreateDirectory(partPath);
 
         // 図面ファイル作成
@@ -82,7 +70,7 @@ public class ServiceIntegrationTests : IDisposable
         Assert.Equal(partId, partJson.Id);
         Assert.True(_partJsonReader.Exists(partPath));
 
-        // === 4. ハッシュ計算と検証 ===
+        // === 3. ハッシュ計算と検証 ===
         var drawingHash = await _hashService.ComputeHashAsync(drawingPath);
         Assert.StartsWith("sha256:", drawingHash.Value);
 
@@ -95,7 +83,7 @@ public class ServiceIntegrationTests : IDisposable
         var validationResult = _hashService.ValidateComponentIntegrity(part);
         Assert.True(validationResult.IsSuccess, $"整合性検証失敗: {validationResult.Message}");
 
-        // === 5. ファイル変更後の検証 ===
+        // === 4. ファイル変更後の検証 ===
         await File.WriteAllTextAsync(drawingPath, "MODIFIED DXF CONTENT");
 
         var validationAfterChange = _hashService.ValidateComponentIntegrity(part);
@@ -104,12 +92,12 @@ public class ServiceIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// 既存のサンプルプロジェクトを読み込んでテスト。
+    /// 既存のサンプルデータを読み込んでテスト。
     /// </summary>
     [Fact]
-    public void ReadSampleProject_CanReadAllJsonFiles()
+    public void ReadSampleData_CanReadAllJsonFiles()
     {
-        // サンプルプロジェクトのパスを計算
+        // サンプルのパスを計算
         var solutionDir = FindSolutionDirectory();
         if (solutionDir == null)
         {
@@ -117,20 +105,8 @@ public class ServiceIntegrationTests : IDisposable
             return;
         }
 
-        var sampleProjectPath = Path.Combine(solutionDir, "data", "projects", "sample-project");
-        if (!Directory.Exists(sampleProjectPath))
-        {
-            // サンプルプロジェクトが存在しない場合はスキップ
-            return;
-        }
-
-        // .da-project 読み込み
-        var projectMarker = _projectMarkerService.Read(sampleProjectPath);
-        Assert.NotNull(projectMarker);
-        Assert.Equal("sample-project", projectMarker.Name);
-
         // asset.json 読み込み
-        var assetPath = Path.Combine(sampleProjectPath, "assets", "lifting-unit");
+        var assetPath = Path.Combine(solutionDir, "data", "assets", "lifting-unit");
         if (Directory.Exists(assetPath))
         {
             var assetJson = _assetJsonReader.Read(assetPath);
@@ -138,7 +114,7 @@ public class ServiceIntegrationTests : IDisposable
             Assert.Equal("lifting-unit", assetJson.Name);
         }
 
-        // part.json 読み込み（コンポーネントは共有ディレクトリに配置）
+        // part.json 読み込み
         var partPath = Path.Combine(solutionDir, "data", "components", "SP-TEST-001");
         if (Directory.Exists(partPath))
         {

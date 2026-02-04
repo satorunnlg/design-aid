@@ -1,5 +1,3 @@
-using DesignAid.Infrastructure.FileSystem;
-
 namespace DesignAid.Commands;
 
 /// <summary>
@@ -8,23 +6,23 @@ namespace DesignAid.Commands;
 public static class CommandHelper
 {
     /// <summary>
-    /// デフォルトのプロジェクトディレクトリパスを取得する。
+    /// 装置ディレクトリのパスを取得する。
     /// </summary>
-    public static string GetDefaultProjectsPath()
+    public static string GetAssetsDirectory()
     {
         var dataDir = Environment.GetEnvironmentVariable("DA_DATA_DIR");
         if (!string.IsNullOrEmpty(dataDir))
-            return Path.Combine(dataDir, "projects");
+            return Path.Combine(dataDir, "assets");
 
         var currentDir = Directory.GetCurrentDirectory();
         var dir = currentDir;
         while (dir != null)
         {
             if (IsRepositoryRoot(dir))
-                return Path.Combine(dir, "data", "projects");
+                return Path.Combine(dir, "data", "assets");
             dir = Directory.GetParent(dir)?.FullName;
         }
-        return Path.Combine(currentDir, "data", "projects");
+        return Path.Combine(currentDir, "data", "assets");
     }
 
     /// <summary>
@@ -74,48 +72,6 @@ public static class CommandHelper
     {
         return File.Exists(Path.Combine(dir, "DesignAid.sln"))
             || File.Exists(Path.Combine(dir, "DesignAid.slnx"));
-    }
-
-    /// <summary>
-    /// カレントディレクトリから親方向に .da-project マーカーを検索し、
-    /// プロジェクトディレクトリを返す。
-    /// </summary>
-    public static string? FindProjectContext()
-    {
-        var projectMarkerService = new ProjectMarkerService();
-        var dir = Directory.GetCurrentDirectory();
-
-        while (dir != null)
-        {
-            if (projectMarkerService.Exists(dir))
-                return dir;
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// プロジェクトパスを解決する。
-    /// </summary>
-    /// <param name="explicitProject">明示的に指定されたパス（null可）</param>
-    /// <returns>解決されたパスとエラーメッセージのタプル</returns>
-    public static (string? path, string? error) ResolveProjectPath(string? explicitProject)
-    {
-        if (!string.IsNullOrEmpty(explicitProject))
-        {
-            var fullPath = Path.GetFullPath(explicitProject);
-            var projectMarkerService = new ProjectMarkerService();
-            if (!projectMarkerService.Exists(fullPath))
-                return (null, $"プロジェクトが見つかりません: {fullPath}");
-            return (fullPath, null);
-        }
-
-        var detected = FindProjectContext();
-        if (detected == null)
-        {
-            return (null, "プロジェクトディレクトリ内で実行するか、--project オプションを指定してください");
-        }
-        return (detected, null);
     }
 
     /// <summary>

@@ -22,39 +22,28 @@ public class AssetService
     /// <summary>
     /// 装置を追加する。
     /// </summary>
-    /// <param name="projectId">プロジェクトID</param>
-    /// <param name="name">装置名</param>
+    /// <param name="name">装置名（グローバルでユニーク）</param>
     /// <param name="directoryPath">ディレクトリパス</param>
     /// <param name="displayName">表示名</param>
     /// <param name="description">説明</param>
     /// <returns>作成された装置</returns>
     public async Task<Asset> AddAsync(
-        Guid projectId,
         string name,
         string directoryPath,
         string? displayName = null,
         string? description = null,
         CancellationToken ct = default)
     {
-        // プロジェクト存在チェック
-        var project = await _context.Projects
-            .FirstOrDefaultAsync(p => p.Id == projectId, ct);
-
-        if (project == null)
-        {
-            throw new InvalidOperationException($"プロジェクトが見つかりません: {projectId}");
-        }
-
-        // 既存チェック
+        // 既存チェック（グローバルでユニーク）
         var existing = await _context.Assets
-            .FirstOrDefaultAsync(a => a.ProjectId == projectId && a.Name == name, ct);
+            .FirstOrDefaultAsync(a => a.Name == name, ct);
 
         if (existing != null)
         {
             throw new InvalidOperationException($"装置 '{name}' は既に存在します");
         }
 
-        var asset = Asset.Create(projectId, name, directoryPath, displayName, description);
+        var asset = Asset.Create(name, directoryPath, displayName, description);
         _context.Assets.Add(asset);
         await _context.SaveChangesAsync(ct);
 
@@ -62,13 +51,14 @@ public class AssetService
     }
 
     /// <summary>
-    /// プロジェクト内の装置一覧を取得する。
+    /// 全装置一覧を取得する。
     /// </summary>
-    public async Task<List<Asset>> GetByProjectAsync(Guid projectId, CancellationToken ct = default)
+    public async Task<List<Asset>> GetAllAsync(CancellationToken ct = default)
     {
         return await _context.Assets
             .Include(a => a.AssetComponents)
-            .Where(a => a.ProjectId == projectId)
+            .Include(a => a.ChildAssets)
+            .Include(a => a.ParentAssets)
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
     }
@@ -80,20 +70,27 @@ public class AssetService
     {
         return await _context.Assets
             .Include(a => a.AssetComponents)
+            .Include(a => a.ChildAssets)
+                .ThenInclude(c => c.ChildAsset)
+            .Include(a => a.ParentAssets)
+                .ThenInclude(p => p.ParentAsset)
             .FirstOrDefaultAsync(a => a.Id == id, ct);
     }
 
     /// <summary>
-    /// 装置を名前で取得する（プロジェクト内）。
+    /// 装置を名前で取得する（グローバルでユニーク）。
     /// </summary>
     public async Task<Asset?> GetByNameAsync(
-        Guid projectId,
         string name,
         CancellationToken ct = default)
     {
         return await _context.Assets
             .Include(a => a.AssetComponents)
-            .FirstOrDefaultAsync(a => a.ProjectId == projectId && a.Name == name, ct);
+            .Include(a => a.ChildAssets)
+                .ThenInclude(c => c.ChildAsset)
+            .Include(a => a.ParentAssets)
+                .ThenInclude(p => p.ParentAsset)
+            .FirstOrDefaultAsync(a => a.Name == name, ct);
     }
 
     /// <summary>
@@ -136,5 +133,88 @@ public class AssetService
         await _context.SaveChangesAsync(ct);
 
         return asset;
+    }
+
+    /// <summary>
+    /// 子装置を追加する（SubAsset として関連付け）。
+    /// </summary>
+    /// <param name="parentAssetId">親装置ID</param>
+    /// <param name="childAssetId">子装置ID</param>
+    /// <param name="quantity">数量</param>
+    /// <param name="notes">備考</param>
+    /// <returns>作成された関連</returns>
+    public async Task<AssetSubAsset> AddSubAssetAsync(
+        Guid parentAssetId,
+        Guid childAssetId,
+        int quantity = 1,
+        string? notes = null,
+        CancellationToken ct = default)
+    {
+        // 親装置の存在チェック
+        var parent = await _context.Assets.FindAsync(new object[] { parentAssetId }, ct);
+        if (parent == null)
+        {
+            throw new InvalidOperationException($"親装置が見つかりません: {parentAssetId}");
+        }
+
+        // 子装置の存在チェック
+        var child = await _context.Assets.FindAsync(new object[] { childAssetId }, ct);
+        if (child == null)
+        {
+            throw new InvalidOperationException($"子装置が見つかりません: {childAssetId}");
+        }
+
+        // 循環参照のチェック
+        if (parentAssetId == childAssetId)
+        {
+            throw new InvalidOperationException("自分自身を子装置として追加できません");
+        }
+
+        // 既存の関連チェック
+        var existing = await _context.AssetSubAssets
+            .FirstOrDefaultAsync(asa =>
+                asa.ParentAssetId == parentAssetId && asa.ChildAssetId == childAssetId, ct);
+
+        if (existing != null)
+        {
+            throw new InvalidOperationException($"装置 '{child.Name}' は既に子装置として登録されています");
+        }
+
+        var assetSubAsset = new AssetSubAsset
+        {
+            ParentAssetId = parentAssetId,
+            ChildAssetId = childAssetId,
+            Quantity = quantity,
+            Notes = notes,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.AssetSubAssets.Add(assetSubAsset);
+        await _context.SaveChangesAsync(ct);
+
+        return assetSubAsset;
+    }
+
+    /// <summary>
+    /// 子装置を削除する。
+    /// </summary>
+    public async Task<bool> RemoveSubAssetAsync(
+        Guid parentAssetId,
+        Guid childAssetId,
+        CancellationToken ct = default)
+    {
+        var subAsset = await _context.AssetSubAssets
+            .FirstOrDefaultAsync(asa =>
+                asa.ParentAssetId == parentAssetId && asa.ChildAssetId == childAssetId, ct);
+
+        if (subAsset == null)
+        {
+            return false;
+        }
+
+        _context.AssetSubAssets.Remove(subAsset);
+        await _context.SaveChangesAsync(ct);
+
+        return true;
     }
 }

@@ -54,62 +54,39 @@ public class SqliteIntegrationTests : IDisposable
     public async Task Database_CreatesAllTables()
     {
         // Assert - テーブルが作成されていることを確認
-        Assert.True(await _context.Projects.AnyAsync() == false);
         Assert.True(await _context.Assets.AnyAsync() == false);
         Assert.True(await _context.Parts.AnyAsync() == false);
         Assert.True(await _context.AssetComponents.AnyAsync() == false);
         Assert.True(await _context.HandoverHistory.AnyAsync() == false);
+        Assert.True(await _context.AssetSubAssets.AnyAsync() == false);
     }
 
     [Fact]
-    public async Task Project_CRUD_WorksCorrectly()
+    public async Task Asset_CRUD_WorksCorrectly()
     {
         // Create
-        var project = Project.Create("test-project", @"C:\work\test");
-        _context.Projects.Add(project);
-        await _context.SaveChangesAsync();
-
-        // Read
-        var read = await _context.Projects.FindAsync(project.Id);
-        Assert.NotNull(read);
-        Assert.Equal("test-project", read.Name);
-
-        // Update
-        read.Update(displayName: "テストプロジェクト");
-        await _context.SaveChangesAsync();
-
-        var updated = await _context.Projects.FindAsync(project.Id);
-        Assert.Equal("テストプロジェクト", updated!.DisplayName);
-
-        // Delete
-        _context.Projects.Remove(updated);
-        await _context.SaveChangesAsync();
-
-        var deleted = await _context.Projects.FindAsync(project.Id);
-        Assert.Null(deleted);
-    }
-
-    [Fact]
-    public async Task Asset_WithProject_WorksCorrectly()
-    {
-        // Arrange
-        var project = Project.Create("project-with-assets", @"C:\work\project");
-        _context.Projects.Add(project);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var asset = Asset.Create(project.Id, "lifting-unit", @"C:\work\project\assets\lifting-unit");
+        var asset = Asset.Create("test-asset", @"C:\work\assets\test-asset");
         _context.Assets.Add(asset);
         await _context.SaveChangesAsync();
 
-        // Assert
-        var loaded = await _context.Assets
-            .Include(a => a.Project)
-            .FirstOrDefaultAsync(a => a.Id == asset.Id);
+        // Read
+        var read = await _context.Assets.FindAsync(asset.Id);
+        Assert.NotNull(read);
+        Assert.Equal("test-asset", read.Name);
 
-        Assert.NotNull(loaded);
-        Assert.NotNull(loaded.Project);
-        Assert.Equal(project.Id, loaded.Project.Id);
+        // Update
+        read.Update(displayName: "テスト装置");
+        await _context.SaveChangesAsync();
+
+        var updated = await _context.Assets.FindAsync(asset.Id);
+        Assert.Equal("テスト装置", updated!.DisplayName);
+
+        // Delete
+        _context.Assets.Remove(updated);
+        await _context.SaveChangesAsync();
+
+        var deleted = await _context.Assets.FindAsync(asset.Id);
+        Assert.Null(deleted);
     }
 
     [Fact]
@@ -150,14 +127,11 @@ public class SqliteIntegrationTests : IDisposable
     public async Task AssetComponent_ManyToMany_WorksCorrectly()
     {
         // Arrange
-        var project = Project.Create("many-to-many", @"C:\work\m2m");
-        _context.Projects.Add(project);
-
-        var asset1 = Asset.Create(project.Id, "asset1", @"C:\work\m2m\assets\asset1");
-        var asset2 = Asset.Create(project.Id, "asset2", @"C:\work\m2m\assets\asset2");
+        var asset1 = Asset.Create("asset1", @"C:\work\assets\asset1");
+        var asset2 = Asset.Create("asset2", @"C:\work\assets\asset2");
         _context.Assets.AddRange(asset1, asset2);
 
-        var part = FabricatedPart.Create(new PartNumber("SHARED-001"), "共有部品", @"C:\work\m2m\components\SHARED-001");
+        var part = FabricatedPart.Create(new PartNumber("SHARED-001"), "共有部品", @"C:\work\components\SHARED-001");
         _context.Parts.Add(part);
 
         await _context.SaveChangesAsync();
@@ -178,6 +152,39 @@ public class SqliteIntegrationTests : IDisposable
         Assert.Equal(2, partWithAssets.AssetComponents.Count);
         Assert.Contains(partWithAssets.AssetComponents, ac => ac.Quantity == 2);
         Assert.Contains(partWithAssets.AssetComponents, ac => ac.Quantity == 3);
+    }
+
+    [Fact]
+    public async Task AssetSubAsset_SelfReferencing_WorksCorrectly()
+    {
+        // Arrange - 親装置と子装置を作成
+        var parentAsset = Asset.Create("parent-device", @"C:\work\assets\parent");
+        var childAsset = Asset.Create("child-device", @"C:\work\assets\child");
+        _context.Assets.AddRange(parentAsset, childAsset);
+        await _context.SaveChangesAsync();
+
+        // Act - 親子関係を作成
+        var subAsset = new AssetSubAsset
+        {
+            ParentAssetId = parentAsset.Id,
+            ChildAssetId = childAsset.Id,
+            Quantity = 2,
+            Notes = "テスト備考",
+            CreatedAt = DateTime.UtcNow
+        };
+        _context.AssetSubAssets.Add(subAsset);
+        await _context.SaveChangesAsync();
+
+        // Assert
+        var loadedParent = await _context.Assets
+            .Include(a => a.ChildAssets)
+            .ThenInclude(c => c.ChildAsset)
+            .FirstOrDefaultAsync(a => a.Id == parentAsset.Id);
+
+        Assert.NotNull(loadedParent);
+        Assert.Single(loadedParent.ChildAssets);
+        Assert.Equal(childAsset.Id, loadedParent.ChildAssets.First().ChildAssetId);
+        Assert.Equal(2, loadedParent.ChildAssets.First().Quantity);
     }
 
     [Fact]
@@ -249,10 +256,7 @@ public class SqliteIntegrationTests : IDisposable
     public async Task CascadeDelete_Asset_DeletesAssetComponents()
     {
         // Arrange
-        var project = Project.Create("cascade", @"C:\work\cascade");
-        _context.Projects.Add(project);
-
-        var asset = Asset.Create(project.Id, "to-delete", @"C:\work\cascade\assets\to-delete");
+        var asset = Asset.Create("to-delete", @"C:\work\assets\to-delete");
         _context.Assets.Add(asset);
 
         var part = FabricatedPart.Create(new PartNumber("CASCADE-001"), "カスケード部品", @"C:\work\CASCADE-001");
@@ -278,16 +282,16 @@ public class SqliteIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task UniqueConstraint_ProjectName_Enforced()
+    public async Task UniqueConstraint_AssetName_Enforced()
     {
         // Arrange
-        var project1 = Project.Create("unique-name", @"C:\work\unique1");
-        _context.Projects.Add(project1);
+        var asset1 = Asset.Create("unique-name", @"C:\work\assets\unique1");
+        _context.Assets.Add(asset1);
         await _context.SaveChangesAsync();
 
         // Act & Assert
-        var project2 = Project.Create("unique-name", @"C:\work\unique2");
-        _context.Projects.Add(project2);
+        var asset2 = Asset.Create("unique-name", @"C:\work\assets\unique2");
+        _context.Assets.Add(asset2);
 
         await Assert.ThrowsAsync<DbUpdateException>(() => _context.SaveChangesAsync());
     }

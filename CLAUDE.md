@@ -107,7 +107,7 @@ If not defined, use standard development practices with these minimums:
 
 ### コマンドライン設計
 - `System.CommandLine` または `Spectre.Console.Cli` を使用
-- サブコマンド構造: `da <command> [options]`
+- サブコマンド構造: `daid <command> [options]`
 - ヘルプは自動生成（`--help` / `-h`）
 - バージョン表示: `--version` / `-v`
 
@@ -148,7 +148,7 @@ If not defined, use standard development practices with these minimums:
 ### 接続設定
 - デフォルト: `localhost:6333`
 - 設定ファイルで変更可能
-- 起動チェック: `da check` で Qdrant 接続を検証
+- 起動チェック: `daid check` で Qdrant 接続を検証
 
 ### ベクトル管理
 - コレクション名: `design_knowledge`（または用途別に分離）
@@ -163,7 +163,7 @@ If not defined, use standard development practices with these minimums:
 - `docker compose up -d` で起動
 
 ### ヘルスチェック
-- `da check` コマンドで依存サービスの状態を確認
+- `daid check` コマンドで依存サービスの状態を確認
 - Qdrant 未起動時は適切なエラーメッセージを表示
 
 ## 設計哲学の遵守 (CRITICAL)

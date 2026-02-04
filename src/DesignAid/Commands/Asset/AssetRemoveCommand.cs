@@ -1,6 +1,5 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
-using DesignAid.Infrastructure.FileSystem;
 
 namespace DesignAid.Commands.Asset;
 
@@ -12,23 +11,15 @@ public class AssetRemoveCommand : Command
     public AssetRemoveCommand() : base("remove", "装置を削除")
     {
         this.Add(new Argument<string>("name", "装置名"));
-        this.Add(new Option<string?>("--project", "プロジェクトパス（省略時はカレントから検出）"));
         this.Add(new Option<bool>("--force", "確認なしで実行"));
 
-        this.Handler = CommandHandler.Create<string, string?, bool>(Execute);
+        this.Handler = CommandHandler.Create<string, bool>(Execute);
     }
 
-    private static void Execute(string name, string? project, bool force)
+    private static void Execute(string name, bool force)
     {
-        var (resolvedPath, error) = CommandHelper.ResolveProjectPath(project);
-        if (resolvedPath == null)
-        {
-            Console.Error.WriteLine($"[ERROR] {error}");
-            Environment.ExitCode = 1;
-            return;
-        }
-
-        var assetPath = Path.Combine(resolvedPath, "assets", name);
+        var assetsDir = CommandHelper.GetAssetsDirectory();
+        var assetPath = Path.Combine(assetsDir, name);
 
         if (!Directory.Exists(assetPath))
         {

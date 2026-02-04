@@ -181,36 +181,6 @@ public class ValidationService
     }
 
     /// <summary>
-    /// 特定のプロジェクト内のパーツを検証する。
-    /// </summary>
-    public async Task<VerificationResult> VerifyByProjectAsync(
-        Guid projectId,
-        string? standardId = null,
-        CancellationToken ct = default)
-    {
-        var result = new VerificationResult();
-
-        var partIds = await _context.AssetComponents
-            .Include(ac => ac.Asset)
-            .Where(ac => ac.Asset != null && ac.Asset.ProjectId == projectId)
-            .Select(ac => ac.PartId)
-            .Distinct()
-            .ToListAsync(ct);
-
-        var parts = await _context.Parts
-            .Where(p => partIds.Contains(p.Id))
-            .ToListAsync(ct);
-
-        foreach (var part in parts)
-        {
-            var partResult = await VerifyPartAsync(part, standardId, ct);
-            result.Merge(partResult);
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// 特定の装置内のパーツを検証する。
     /// </summary>
     public async Task<VerificationResult> VerifyByAssetAsync(

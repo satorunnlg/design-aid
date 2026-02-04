@@ -124,9 +124,8 @@ public class PartService
     /// </summary>
     public async Task<List<DesignComponent>> GetAllAsync(CancellationToken ct = default)
     {
-        return await _context.Parts
-            .OrderBy(p => p.PartNumber)
-            .ToListAsync(ct);
+        var parts = await _context.Parts.ToListAsync(ct);
+        return parts.OrderBy(p => p.PartNumber.Value).ToList();
     }
 
     /// <summary>
@@ -136,22 +135,20 @@ public class PartService
         PartType type,
         CancellationToken ct = default)
     {
-        return type switch
+        var parts = type switch
         {
-            PartType.Fabricated => await _context.FabricatedParts
-                .OrderBy(p => p.PartNumber)
+            PartType.Fabricated => (await _context.FabricatedParts.ToListAsync(ct))
                 .Cast<DesignComponent>()
-                .ToListAsync(ct),
-            PartType.Purchased => await _context.PurchasedParts
-                .OrderBy(p => p.PartNumber)
+                .ToList(),
+            PartType.Purchased => (await _context.PurchasedParts.ToListAsync(ct))
                 .Cast<DesignComponent>()
-                .ToListAsync(ct),
-            PartType.Standard => await _context.StandardParts
-                .OrderBy(p => p.PartNumber)
+                .ToList(),
+            PartType.Standard => (await _context.StandardParts.ToListAsync(ct))
                 .Cast<DesignComponent>()
-                .ToListAsync(ct),
+                .ToList(),
             _ => throw new ArgumentOutOfRangeException(nameof(type))
         };
+        return parts.OrderBy(p => p.PartNumber.Value).ToList();
     }
 
     /// <summary>

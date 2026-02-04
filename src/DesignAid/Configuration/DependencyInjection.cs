@@ -47,7 +47,6 @@ public static class DependencyInjection
         services.AddQdrantService(settings);
 
         // アプリケーションサービス
-        services.AddScoped<ProjectService>();
         services.AddScoped<AssetService>();
         services.AddScoped<PartService>();
         services.AddScoped<HashService>();

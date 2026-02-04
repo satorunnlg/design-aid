@@ -21,21 +21,11 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
                 v => Guid.Parse(v))
             .HasColumnType("TEXT");
 
-        // ProjectId（外部キー）
-        builder.Property(a => a.ProjectId)
-            .IsRequired()
-            .HasConversion(
-                v => v.ToString(),
-                v => Guid.Parse(v))
-            .HasColumnType("TEXT");
-        builder.HasIndex(a => a.ProjectId);
-
-        // Name（プロジェクト内でユニーク）
+        // Name（グローバルでユニーク）
         builder.Property(a => a.Name)
             .IsRequired()
             .HasMaxLength(255);
-        builder.HasIndex(a => a.Name);
-        builder.HasIndex(a => new { a.ProjectId, a.Name })
+        builder.HasIndex(a => a.Name)
             .IsUnique();
 
         // DisplayName
@@ -63,7 +53,62 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
             .HasConversion(
                 v => v.ToString("o"),
                 v => DateTime.Parse(v));
+    }
+}
 
-        // Project とのリレーションは ProjectConfiguration で設定済み
+/// <summary>
+/// AssetSubAsset エンティティ（装置-子装置中間テーブル）の EF Core 設定。
+/// </summary>
+public class AssetSubAssetConfiguration : IEntityTypeConfiguration<AssetSubAsset>
+{
+    public void Configure(EntityTypeBuilder<AssetSubAsset> builder)
+    {
+        builder.ToTable("AssetSubAssets");
+
+        // 複合主キー
+        builder.HasKey(asa => new { asa.ParentAssetId, asa.ChildAssetId });
+
+        // 外部キー設定
+        builder.Property(asa => asa.ParentAssetId)
+            .HasConversion(
+                v => v.ToString(),
+                v => Guid.Parse(v))
+            .HasColumnType("TEXT");
+
+        builder.Property(asa => asa.ChildAssetId)
+            .HasConversion(
+                v => v.ToString(),
+                v => Guid.Parse(v))
+            .HasColumnType("TEXT");
+
+        // インデックス
+        builder.HasIndex(asa => asa.ParentAssetId);
+        builder.HasIndex(asa => asa.ChildAssetId);
+
+        // リレーション
+        builder.HasOne(asa => asa.ParentAsset)
+            .WithMany(a => a.ChildAssets)
+            .HasForeignKey(asa => asa.ParentAssetId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(asa => asa.ChildAsset)
+            .WithMany(a => a.ParentAssets)
+            .HasForeignKey(asa => asa.ChildAssetId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Quantity
+        builder.Property(asa => asa.Quantity)
+            .HasDefaultValue(1);
+
+        // Notes
+        builder.Property(asa => asa.Notes)
+            .HasMaxLength(2000);
+
+        // CreatedAt
+        builder.Property(asa => asa.CreatedAt)
+            .IsRequired()
+            .HasConversion(
+                v => v.ToString("o"),
+                v => DateTime.Parse(v));
     }
 }

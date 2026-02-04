@@ -8,7 +8,7 @@
 
     <!-- グローバルツール設定 -->
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>da</ToolCommandName>
+    <ToolCommandName>daid</ToolCommandName>
     <PackageId>DesignAid</PackageId>
     <Version>0.1.0</Version>
     <Authors>Your Name</Authors>

@@ -59,7 +59,6 @@ public class SearchService
         var partIds = parts.Select(p => p.Id).ToList();
         var assetComponents = await _context.AssetComponents
             .Include(ac => ac.Asset)
-            .ThenInclude(a => a!.Project)
             .Where(ac => partIds.Contains(ac.PartId))
             .ToListAsync(ct);
 
@@ -71,7 +70,6 @@ public class SearchService
         {
             var assetComponent = assetLookup.GetValueOrDefault(part.Id);
             var asset = assetComponent?.Asset;
-            var project = asset?.Project;
 
             var content = BuildPartContent(part);
 
@@ -82,8 +80,8 @@ public class SearchService
                 PartNumber = part.PartNumber.Value,
                 AssetId = asset?.Id,
                 AssetName = asset?.Name,
-                ProjectId = project?.Id,
-                ProjectName = project?.Name,
+                ProjectId = null, // Project 概念削除のため
+                ProjectName = null,
                 Type = "spec",
                 Content = content,
                 CreatedAt = part.CreatedAt

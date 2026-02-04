@@ -150,7 +150,6 @@ public class SyncService
         var parts = await _context.Parts
             .Include(p => p.AssetComponents)
             .ThenInclude(ac => ac.Asset)
-            .ThenInclude(a => a!.Project)
             .ToListAsync(ct);
 
         if (parts.Count == 0)
@@ -162,7 +161,6 @@ public class SyncService
         {
             var assetComponent = part.AssetComponents.FirstOrDefault();
             var asset = assetComponent?.Asset;
-            var project = asset?.Project;
 
             var content = BuildPartContent(part);
 
@@ -173,8 +171,8 @@ public class SyncService
                 PartNumber = part.PartNumber.Value,
                 AssetId = asset?.Id,
                 AssetName = asset?.Name,
-                ProjectId = project?.Id,
-                ProjectName = project?.Name,
+                ProjectId = null, // Project 概念削除のため
+                ProjectName = null,
                 Type = "spec",
                 Content = content,
                 CreatedAt = part.CreatedAt
