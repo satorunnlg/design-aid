@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Text;
 using DesignAid.Commands;
 using DesignAid.Commands.Project;
 using DesignAid.Commands.Asset;
@@ -13,6 +14,8 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // コンソール出力を UTF-8 に設定
+        Console.OutputEncoding = Encoding.UTF8;
         var rootCommand = new RootCommand("Design Aid - 機械設計支援システム")
         {
             // 初期化・設定

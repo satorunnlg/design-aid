@@ -5,7 +5,23 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- グローバルツール設定 -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>da</ToolCommandName>
+    <PackageId>DesignAid</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Your Name</Authors>
+    <Description>Design Aid - 機械設計支援システム CLI</Description>
+    <PackageProjectUrl>https://github.com/yourusername/design-aid</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yourusername/design-aid</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.2">
