@@ -43,8 +43,8 @@ public class SetupCommand : Command
             var directories = new[]
             {
                 dataDir,
-                Path.Combine(dataDir, "components"),
-                Path.Combine(dataDir, "projects")
+                Path.Combine(dataDir, "assets"),
+                Path.Combine(dataDir, "components")
             };
 
             foreach (var dir in directories)
@@ -138,7 +138,7 @@ public class SetupCommand : Command
             Console.WriteLine("次のステップ:");
             Console.WriteLine($"  1. config.json を編集して設定を調整");
             Console.WriteLine($"  2. Qdrant を起動: docker compose up -d");
-            Console.WriteLine($"  3. プロジェクトを登録: da project add <path>");
+            Console.WriteLine($"  3. 装置を追加: da asset add <name>");
 
             return 0;
         }

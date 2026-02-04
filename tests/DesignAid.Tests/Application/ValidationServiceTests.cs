@@ -209,51 +209,18 @@ public class ValidationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task VerifyByProjectAsync_ReturnsResultsForProject()
+    public async Task VerifyByAssetAsync_ReturnsResultsForAsset()
     {
         // Arrange
-        var project = Project.Create("test-project", _tempDir);
-        _context.Projects.Add(project);
-
         var assetPath = Path.Combine(_tempDir, "assets", "test-asset");
         Directory.CreateDirectory(assetPath);
-        var asset = Asset.Create(project.Id, "test-asset", assetPath);
+        var asset = Asset.Create("test-asset", assetPath);
         _context.Assets.Add(asset);
 
         var partDir = Path.Combine(_tempDir, "components", "TEST-008");
         Directory.CreateDirectory(partDir);
 
-        var part = FabricatedPart.Create(new PartNumber("TEST-008"), "プロジェクト部品", partDir);
-        _context.Parts.Add(part);
-
-        var assetComponent = AssetComponent.Create(asset.Id, part.Id, 1);
-        _context.AssetComponents.Add(assetComponent);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _service.VerifyByProjectAsync(project.Id);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.True(result.Results.Count > 0);
-    }
-
-    [Fact]
-    public async Task VerifyByAssetAsync_ReturnsResultsForAsset()
-    {
-        // Arrange
-        var project = Project.Create("test-project2", _tempDir);
-        _context.Projects.Add(project);
-
-        var assetPath = Path.Combine(_tempDir, "assets", "test-asset2");
-        Directory.CreateDirectory(assetPath);
-        var asset = Asset.Create(project.Id, "test-asset2", assetPath);
-        _context.Assets.Add(asset);
-
-        var partDir = Path.Combine(_tempDir, "components", "TEST-009");
-        Directory.CreateDirectory(partDir);
-
-        var part = FabricatedPart.Create(new PartNumber("TEST-009"), "装置部品", partDir);
+        var part = FabricatedPart.Create(new PartNumber("TEST-008"), "装置部品", partDir);
         _context.Parts.Add(part);
 
         var assetComponent = AssetComponent.Create(asset.Id, part.Id, 1);
@@ -266,6 +233,38 @@ public class ValidationServiceTests : IDisposable
         // Assert
         Assert.NotNull(result);
         Assert.True(result.Results.Count > 0);
+    }
+
+    [Fact]
+    public async Task VerifyByAssetAsync_WithMultipleParts_ReturnsAllResults()
+    {
+        // Arrange
+        var assetPath = Path.Combine(_tempDir, "assets", "test-asset2");
+        Directory.CreateDirectory(assetPath);
+        var asset = Asset.Create("test-asset2", assetPath);
+        _context.Assets.Add(asset);
+
+        var partDir1 = Path.Combine(_tempDir, "components", "TEST-009");
+        Directory.CreateDirectory(partDir1);
+        var part1 = FabricatedPart.Create(new PartNumber("TEST-009"), "装置部品1", partDir1);
+
+        var partDir2 = Path.Combine(_tempDir, "components", "TEST-010");
+        Directory.CreateDirectory(partDir2);
+        var part2 = FabricatedPart.Create(new PartNumber("TEST-010"), "装置部品2", partDir2);
+
+        _context.Parts.AddRange(part1, part2);
+
+        var ac1 = AssetComponent.Create(asset.Id, part1.Id, 1);
+        var ac2 = AssetComponent.Create(asset.Id, part2.Id, 2);
+        _context.AssetComponents.AddRange(ac1, ac2);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _service.VerifyByAssetAsync(asset.Id);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Results.Count);
     }
 
     [Fact]

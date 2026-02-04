@@ -1,4 +1,4 @@
-# Design Aid (DA)
+# Design Aid (DAID)
 
 機械設計における「設計の論理（理）」と「物理的な手配」の乖離を埋めるためのサポートシステム。
 
@@ -16,27 +16,48 @@ Design Aid は、AWS CDK の思想を機械設計に適用し、**手配境界**
 
 ## 主な機能
 
-- `da check` - ファイルハッシュの整合性検証
-- `da verify` - 設計基準に基づくバリデーション
-- `da sync` - ファイルシステムと DB の同期
-- `da deploy` - 手配パッケージの作成
-- `da search` - 類似設計のベクトル検索
-- `da init` - 新規プロジェクトの初期化
-- `da status` - プロジェクト状態の表示
+### 装置管理
+- `daid asset add <name>` - 装置を追加
+- `daid asset list` - 装置一覧を表示
+- `daid asset remove <name>` - 装置を削除
+- `daid asset link <parent> --child <child>` - 子装置を組み込み
+
+### パーツ管理
+- `daid part add <part-number>` - パーツを追加
+- `daid part list` - パーツ一覧を表示
+- `daid part link <part-number> --asset <name>` - パーツを装置に紐付け
+- `daid part remove <part-number>` - パーツを削除
+
+### 整合性・検証
+- `daid check` - ファイルハッシュの整合性検証
+- `daid verify` - 設計基準に基づくバリデーション
+- `daid sync` - ファイルシステムと DB の同期
+
+### 手配・検索
+- `daid deploy` - 手配パッケージの作成
+- `daid search <query>` - 類似設計のベクトル検索
+
+### バックアップ・復元
+- `daid backup` - データをバックアップ（ZIP/S3）
+- `daid backup --local-only` - ローカル ZIP のみ作成
+- `daid restore <source>` - バックアップから復元
+
+### 状態確認
+- `daid status` - システム状態の表示
 
 ## 技術スタック
 
-- **言語**: C# 12+ / .NET 8.0+
-- **CLI**: System.CommandLine
-- **ORM**: Entity Framework Core (SQLite)
-- **Vector DB**: Qdrant
+- **言語**: C# 13 / .NET 10.0
+- **CLI**: System.CommandLine 2.0
+- **ORM**: Entity Framework Core 10.0 (SQLite)
+- **Vector DB**: Qdrant 1.x
 
 ## セットアップ
 
 ### 前提条件
 
-- .NET 8.0 SDK
-- Docker (Qdrant 用)
+- .NET 10.0 SDK
+- Docker (Qdrant 用、オプション)
 
 ### インストール
 
@@ -48,24 +69,75 @@ cd design-aid
 # 依存関係の復元
 dotnet restore
 
-# Qdrant の起動
-docker compose up -d
-
 # ビルド
 dotnet build
+
+# グローバルツールとしてインストール（オプション）
+dotnet pack src/DesignAid
+dotnet tool install --global --add-source ./src/DesignAid/bin/Release DesignAid
 ```
 
-### 実行
+### データディレクトリの初期化
+
+```bash
+# データディレクトリを初期化
+daid setup
+
+# または dotnet run で実行
+dotnet run --project src/DesignAid -- setup
+```
+
+### Qdrant（オプション）
+
+類似設計検索を使用する場合：
+
+```bash
+# Qdrant の起動
+docker compose up -d
+```
+
+## 使用例
 
 ```bash
 # ヘルプ表示
-dotnet run --project src/DesignAid -- --help
+daid --help
 
-# プロジェクト初期化
-dotnet run --project src/DesignAid -- init
+# データディレクトリの初期化
+daid setup
+
+# 装置を追加
+daid asset add lifting-unit --display-name "昇降ユニット"
+
+# パーツ追加
+daid part add SP-2026-PLATE-01 --name "ベースプレート" --type Fabricated
+
+# パーツを装置に紐付け
+daid part link SP-2026-PLATE-01 --asset lifting-unit
+
+# パーツ一覧
+daid part list
 
 # 整合性チェック
-dotnet run --project src/DesignAid -- check
+daid check
+
+# 状態確認
+daid status
+
+# バックアップ（ローカル）
+daid backup --local-only
+
+# 復元
+daid restore ./design-aid-backup_20260205.zip
+```
+
+## 開発
+
+```bash
+# テスト実行
+dotnet test
+
+# フォーマット
+dotnet format
 ```
 
 ## ドキュメント

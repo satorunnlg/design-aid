@@ -11,16 +11,14 @@ public class AssetTests
     public void Create_ValidInput_ReturnsAsset()
     {
         // Arrange
-        var projectId = Guid.NewGuid();
         var name = "lifting-unit";
         var path = @"C:\work\test\assets\lifting-unit";
 
         // Act
-        var asset = Asset.Create(projectId, name, path);
+        var asset = Asset.Create(name, path);
 
         // Assert
         Assert.NotEqual(Guid.Empty, asset.Id);
-        Assert.Equal(projectId, asset.ProjectId);
         Assert.Equal(name, asset.Name);
         Assert.Contains("lifting-unit", asset.DirectoryPath);
         Assert.True(asset.CreatedAt <= DateTime.UtcNow);
@@ -31,13 +29,12 @@ public class AssetTests
     public void Create_WithDisplayName_SetsDisplayName()
     {
         // Arrange
-        var projectId = Guid.NewGuid();
         var name = "lifting-unit";
         var path = @"C:\work\test\assets\lifting-unit";
         var displayName = "昇降ユニット";
 
         // Act
-        var asset = Asset.Create(projectId, name, path, displayName);
+        var asset = Asset.Create(name, path, displayName);
 
         // Assert
         Assert.Equal(displayName, asset.DisplayName);
@@ -47,30 +44,15 @@ public class AssetTests
     public void Create_WithDescription_SetsDescription()
     {
         // Arrange
-        var projectId = Guid.NewGuid();
         var name = "lifting-unit";
         var path = @"C:\work\test\assets\lifting-unit";
         var description = "昇降機構を担当するユニット";
 
         // Act
-        var asset = Asset.Create(projectId, name, path, description: description);
+        var asset = Asset.Create(name, path, description: description);
 
         // Assert
         Assert.Equal(description, asset.Description);
-    }
-
-    [Fact]
-    public void Create_EmptyProjectId_ThrowsArgumentException()
-    {
-        // Arrange
-        var projectId = Guid.Empty;
-        var name = "test-asset";
-        var path = @"C:\work\test\assets\test-asset";
-
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() =>
-            Asset.Create(projectId, name, path));
-        Assert.Contains("プロジェクトIDは必須", ex.Message);
     }
 
     [Theory]
@@ -80,12 +62,11 @@ public class AssetTests
     public void Create_NullOrEmptyName_ThrowsArgumentException(string? name)
     {
         // Arrange
-        var projectId = Guid.NewGuid();
         var path = @"C:\work\test\assets\test";
 
         // Act & Assert
         var ex = Assert.Throws<ArgumentException>(() =>
-            Asset.Create(projectId, name!, path));
+            Asset.Create(name!, path));
         Assert.Contains("装置名は必須", ex.Message);
     }
 
@@ -96,12 +77,11 @@ public class AssetTests
     public void Create_NullOrEmptyPath_ThrowsArgumentException(string? path)
     {
         // Arrange
-        var projectId = Guid.NewGuid();
         var name = "test-asset";
 
         // Act & Assert
         var ex = Assert.Throws<ArgumentException>(() =>
-            Asset.Create(projectId, name, path!));
+            Asset.Create(name, path!));
         Assert.Contains("ディレクトリパスは必須", ex.Message);
     }
 
@@ -110,7 +90,6 @@ public class AssetTests
     {
         // Arrange
         var id = Guid.NewGuid();
-        var projectId = Guid.NewGuid();
         var name = "reconstructed-asset";
         var path = @"C:\work\test\assets\reconstructed-asset";
         var createdAt = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -118,11 +97,10 @@ public class AssetTests
         var displayName = "再構築装置";
 
         // Act
-        var asset = Asset.Reconstruct(id, projectId, name, path, createdAt, updatedAt, displayName);
+        var asset = Asset.Reconstruct(id, name, path, createdAt, updatedAt, displayName);
 
         // Assert
         Assert.Equal(id, asset.Id);
-        Assert.Equal(projectId, asset.ProjectId);
         Assert.Equal(name, asset.Name);
         Assert.Equal(path, asset.DirectoryPath);
         Assert.Equal(createdAt, asset.CreatedAt);
@@ -134,7 +112,7 @@ public class AssetTests
     public void Update_DisplayName_UpdatesAndSetsUpdatedAt()
     {
         // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
+        var asset = Asset.Create("test", @"C:\work\test\assets\test");
         var originalUpdatedAt = asset.UpdatedAt;
         var newDisplayName = "更新後の表示名";
 
@@ -153,7 +131,7 @@ public class AssetTests
     public void Update_Description_UpdatesDescription()
     {
         // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
+        var asset = Asset.Create("test", @"C:\work\test\assets\test");
         var newDescription = "更新後の説明";
 
         // Act
@@ -167,7 +145,7 @@ public class AssetTests
     public void UpdatePath_ValidPath_UpdatesPath()
     {
         // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
+        var asset = Asset.Create("test", @"C:\work\test\assets\test");
         var newPath = @"C:\work\new-location\assets\test";
 
         // Act
@@ -184,7 +162,7 @@ public class AssetTests
     public void UpdatePath_NullOrEmpty_ThrowsArgumentException(string? newPath)
     {
         // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
+        var asset = Asset.Create("test", @"C:\work\test\assets\test");
 
         // Act & Assert
         var ex = Assert.Throws<ArgumentException>(() => asset.UpdatePath(newPath!));
@@ -195,25 +173,12 @@ public class AssetTests
     public void GetAssetJsonPath_ReturnsCorrectPath()
     {
         // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
+        var asset = Asset.Create("test", @"C:\work\test\assets\test");
 
         // Act
         var jsonPath = asset.GetAssetJsonPath();
 
         // Assert
         Assert.EndsWith("asset.json", jsonPath);
-    }
-
-    [Fact]
-    public void GetComponentsDirectoryPath_ReturnsCorrectPath()
-    {
-        // Arrange
-        var asset = Asset.Create(Guid.NewGuid(), "test", @"C:\work\test\assets\test");
-
-        // Act
-        var componentsPath = asset.GetComponentsDirectoryPath();
-
-        // Assert
-        Assert.Contains("components", componentsPath);
     }
 }

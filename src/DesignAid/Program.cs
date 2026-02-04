@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.Text;
 using DesignAid.Commands;
-using DesignAid.Commands.Project;
 using DesignAid.Commands.Asset;
 using DesignAid.Commands.Part;
 
@@ -22,8 +21,7 @@ public class Program
             new SetupCommand(),
             new ConfigCommand(),
 
-            // プロジェクト・装置・パーツ管理
-            new ProjectCommand(),
+            // 装置・パーツ管理
             new AssetCommand(),
             new PartCommand(),
 
@@ -37,8 +35,9 @@ public class Program
             new DeployCommand(),
             new SearchCommand(),
 
-            // バックアップ
+            // バックアップ・復元
             new BackupCommand(),
+            new RestoreCommand(),
 
             // ツール管理
             new UpdateCommand()

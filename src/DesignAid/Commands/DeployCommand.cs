@@ -16,11 +16,12 @@ public class DeployCommand : Command
         this.Add(new Option<string?>("--output", "出力先ディレクトリ"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>("--no-confirm", "確認なしで実行"));
+        this.Add(new Option<bool>("--dry-run", "実行せずにプレビューのみ"));
 
-        this.Handler = CommandHandler.Create<string?, string?, bool, bool>(Execute);
+        this.Handler = CommandHandler.Create<string?, string?, bool, bool, bool>(Execute);
     }
 
-    private static void Execute(string? part, string? output, bool json, bool noConfirm)
+    private static void Execute(string? part, string? output, bool json, bool noConfirm, bool dryRun)
     {
         var componentsDir = CommandHelper.GetComponentsDirectory();
 
@@ -104,7 +105,14 @@ public class DeployCommand : Command
 
         if (!json)
         {
-            Console.WriteLine("Creating deployment package...");
+            if (dryRun)
+            {
+                Console.WriteLine("Deploy Preview (--dry-run)");
+            }
+            else
+            {
+                Console.WriteLine("Creating deployment package...");
+            }
             Console.WriteLine();
             Console.WriteLine("Parts to deploy:");
             foreach (var target in deployTargets)
@@ -117,6 +125,14 @@ public class DeployCommand : Command
             Console.WriteLine($"Output: {deployDir}");
             Console.WriteLine();
 
+            if (dryRun)
+            {
+                Console.WriteLine($"Total: {deployTargets.Count} part(s) would be deployed");
+                Console.WriteLine();
+                Console.WriteLine("[DRY-RUN] 実際のデプロイは行われません");
+                return;
+            }
+
             if (!noConfirm)
             {
                 Console.Write("Deploy these parts? [y/N] ");
@@ -128,6 +144,24 @@ public class DeployCommand : Command
                 }
                 Console.WriteLine();
             }
+        }
+
+        // ドライランの場合は JSON 出力も別処理
+        if (dryRun && json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                dryRun = true,
+                wouldDeploy = deployTargets.Select(t => new
+                {
+                    partNumber = t.PartNumber,
+                    name = t.Name,
+                    type = t.Type,
+                    files = t.Files
+                }).ToList(),
+                outputPath = deployDir
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            return;
         }
 
         // デプロイ実行

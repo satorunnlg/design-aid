@@ -6,15 +6,15 @@ namespace DesignAid.Infrastructure.Persistence;
 
 /// <summary>
 /// Design Aid の EF Core DbContext。
-/// SQLite を使用し、プロジェクト・装置・部品・手配履歴を管理する。
+/// SQLite を使用し、装置・部品・手配履歴を管理する。
 /// </summary>
 public class DesignAidDbContext : DbContext
 {
-    /// <summary>プロジェクト</summary>
-    public DbSet<Project> Projects => Set<Project>();
-
     /// <summary>装置</summary>
     public DbSet<Asset> Assets => Set<Asset>();
+
+    /// <summary>装置-子装置関連（中間テーブル）</summary>
+    public DbSet<AssetSubAsset> AssetSubAssets => Set<AssetSubAsset>();
 
     /// <summary>部品（基底クラス、TPH により FabricatedPart/PurchasedPart/StandardPart を含む）</summary>
     public DbSet<DesignComponent> Parts => Set<DesignComponent>();
@@ -74,8 +74,8 @@ public class DesignAidDbContext : DbContext
         base.OnModelCreating(modelBuilder);
 
         // Configuration クラスを適用
-        modelBuilder.ApplyConfiguration(new ProjectConfiguration());
         modelBuilder.ApplyConfiguration(new AssetConfiguration());
+        modelBuilder.ApplyConfiguration(new AssetSubAssetConfiguration());
         modelBuilder.ApplyConfiguration(new DesignComponentConfiguration());
         modelBuilder.ApplyConfiguration(new AssetComponentConfiguration());
         modelBuilder.ApplyConfiguration(new HandoverRecordConfiguration());

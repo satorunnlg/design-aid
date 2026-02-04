@@ -263,8 +263,8 @@ public class ConfigPathCommand : Command
         Console.WriteLine("パス情報:");
         Console.WriteLine($"  データディレクトリ: {dataDir}");
         Console.WriteLine($"  設定ファイル: {Path.Combine(dataDir, "config.json")}");
+        Console.WriteLine($"  装置: {Path.Combine(dataDir, "assets")}");
         Console.WriteLine($"  コンポーネント: {Path.Combine(dataDir, "components")}");
-        Console.WriteLine($"  プロジェクト: {Path.Combine(dataDir, "projects")}");
 
         return 0;
     }

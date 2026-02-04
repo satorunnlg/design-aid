@@ -2,17 +2,14 @@ namespace DesignAid.Domain.Entities;
 
 /// <summary>
 /// 装置を表すエンティティ。
-/// プロジェクト内のユニット・装置単位で管理し、複数の部品を含む。
+/// トップレベルのユニット・装置単位で管理し、複数の部品や子装置を含む。
 /// </summary>
 public class Asset
 {
     /// <summary>内部ID（UUID v4）</summary>
     public Guid Id { get; private set; }
 
-    /// <summary>所属プロジェクトID</summary>
-    public Guid ProjectId { get; private set; }
-
-    /// <summary>装置名（ディレクトリ名、プロジェクト内でユニーク）</summary>
+    /// <summary>装置名（ディレクトリ名、グローバルでユニーク）</summary>
     public string Name { get; private set; } = string.Empty;
 
     /// <summary>表示名</summary>
@@ -30,11 +27,14 @@ public class Asset
     /// <summary>更新日時</summary>
     public DateTime UpdatedAt { get; private set; }
 
-    /// <summary>所属プロジェクト（ナビゲーションプロパティ）</summary>
-    public Project? Project { get; private set; }
-
     /// <summary>部品との関連（多対多、中間テーブル経由）</summary>
     public ICollection<AssetComponent> AssetComponents { get; private set; } = new List<AssetComponent>();
+
+    /// <summary>子装置との関連（この装置が親の場合）</summary>
+    public ICollection<AssetSubAsset> ChildAssets { get; private set; } = new List<AssetSubAsset>();
+
+    /// <summary>親装置との関連（この装置が子の場合）</summary>
+    public ICollection<AssetSubAsset> ParentAssets { get; private set; } = new List<AssetSubAsset>();
 
     /// <summary>
     /// EF Core 用のパラメータなしコンストラクタ。
@@ -44,22 +44,17 @@ public class Asset
     /// <summary>
     /// 新しい装置を生成する。
     /// </summary>
-    /// <param name="projectId">プロジェクトID</param>
     /// <param name="name">装置名</param>
     /// <param name="directoryPath">ディレクトリパス</param>
     /// <param name="displayName">表示名</param>
     /// <param name="description">説明</param>
     /// <returns>Asset インスタンス</returns>
     public static Asset Create(
-        Guid projectId,
         string name,
         string directoryPath,
         string? displayName = null,
         string? description = null)
     {
-        if (projectId == Guid.Empty)
-            throw new ArgumentException("プロジェクトIDは必須です", nameof(projectId));
-
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("装置名は必須です", nameof(name));
 
@@ -71,7 +66,6 @@ public class Asset
         return new Asset
         {
             Id = Guid.NewGuid(),
-            ProjectId = projectId,
             Name = name,
             DisplayName = displayName,
             Description = description,
@@ -86,7 +80,6 @@ public class Asset
     /// </summary>
     public static Asset Reconstruct(
         Guid id,
-        Guid projectId,
         string name,
         string directoryPath,
         DateTime createdAt,
@@ -97,7 +90,6 @@ public class Asset
         return new Asset
         {
             Id = id,
-            ProjectId = projectId,
             Name = name,
             DisplayName = displayName,
             Description = description,
@@ -133,9 +125,31 @@ public class Asset
     /// asset.json ファイルのパスを取得する。
     /// </summary>
     public string GetAssetJsonPath() => Path.Combine(DirectoryPath, "asset.json");
+}
 
-    /// <summary>
-    /// components ディレクトリのパスを取得する。
-    /// </summary>
-    public string GetComponentsDirectoryPath() => Path.Combine(DirectoryPath, "components");
+/// <summary>
+/// 装置-子装置の関連を表す中間エンティティ。
+/// </summary>
+public class AssetSubAsset
+{
+    /// <summary>親装置ID</summary>
+    public Guid ParentAssetId { get; set; }
+
+    /// <summary>子装置ID</summary>
+    public Guid ChildAssetId { get; set; }
+
+    /// <summary>使用数量</summary>
+    public int Quantity { get; set; } = 1;
+
+    /// <summary>備考</summary>
+    public string? Notes { get; set; }
+
+    /// <summary>作成日時</summary>
+    public DateTime CreatedAt { get; set; }
+
+    /// <summary>親装置（ナビゲーションプロパティ）</summary>
+    public Asset? ParentAsset { get; set; }
+
+    /// <summary>子装置（ナビゲーションプロパティ）</summary>
+    public Asset? ChildAsset { get; set; }
 }

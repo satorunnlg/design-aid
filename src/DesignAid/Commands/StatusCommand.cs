@@ -12,77 +12,48 @@ namespace DesignAid.Commands;
 /// </summary>
 public class StatusCommand : Command
 {
-    public StatusCommand() : base("status", "プロジェクト状態を表示")
+    public StatusCommand() : base("status", "システム状態を表示")
     {
-        this.Add(new Option<string?>("--project", "特定プロジェクトを表示"));
         this.Add(new Option<string?>("--asset", "特定装置を表示"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
-        this.Handler = CommandHandler.Create<string?, string?, bool>(Execute);
+        this.Handler = CommandHandler.Create<string?, bool>(Execute);
     }
 
-    private static void Execute(string? project, string? asset, bool json)
+    private static void Execute(string? asset, bool json)
     {
         var dataDir = CommandHelper.GetDataDirectory();
-        var projectsDir = CommandHelper.GetDefaultProjectsPath();
+        var assetsDir = CommandHelper.GetAssetsDirectory();
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var dbPath = CommandHelper.GetDatabasePath();
 
-        var projectMarkerService = new ProjectMarkerService();
         var assetJsonReader = new AssetJsonReader();
         var partJsonReader = new PartJsonReader();
 
-        // プロジェクト情報を収集
-        var projects = new List<ProjectInfo>();
-        if (Directory.Exists(projectsDir))
+        // 装置情報を収集
+        var assets = new List<AssetInfo>();
+        if (Directory.Exists(assetsDir))
         {
-            foreach (var dir in Directory.GetDirectories(projectsDir))
+            foreach (var dir in Directory.GetDirectories(assetsDir))
             {
-                if (!projectMarkerService.Exists(dir)) continue;
-                var marker = projectMarkerService.Read(dir);
-                if (marker == null) continue;
+                if (!assetJsonReader.Exists(dir)) continue;
+                var assetJson = assetJsonReader.Read(dir);
+                if (assetJson == null) continue;
 
-                // 特定プロジェクトが指定された場合はフィルタ
-                if (!string.IsNullOrEmpty(project) &&
-                    !marker.Name.Equals(project, StringComparison.OrdinalIgnoreCase))
+                // 特定装置が指定された場合はフィルタ
+                if (!string.IsNullOrEmpty(asset) &&
+                    !assetJson.Name.Equals(asset, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                var projectInfo = new ProjectInfo
+                assets.Add(new AssetInfo
                 {
-                    Name = marker.Name,
-                    Path = dir,
-                    Id = marker.ProjectId,
-                    RegisteredAt = marker.RegisteredAt
-                };
-
-                var assetsDir = Path.Combine(dir, "assets");
-                if (Directory.Exists(assetsDir))
-                {
-                    foreach (var assetDir in Directory.GetDirectories(assetsDir))
-                    {
-                        if (!assetJsonReader.Exists(assetDir)) continue;
-                        var assetJson = assetJsonReader.Read(assetDir);
-                        if (assetJson == null) continue;
-
-                        // 特定装置が指定された場合はフィルタ
-                        if (!string.IsNullOrEmpty(asset) &&
-                            !assetJson.Name.Equals(asset, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        projectInfo.Assets.Add(new AssetInfo
-                        {
-                            Name = assetJson.Name,
-                            DisplayName = assetJson.DisplayName,
-                            Id = assetJson.Id
-                        });
-                    }
-                }
-
-                projects.Add(projectInfo);
+                    Name = assetJson.Name,
+                    DisplayName = assetJson.DisplayName,
+                    Id = assetJson.Id,
+                    Path = dir
+                });
             }
         }
 
@@ -120,13 +91,12 @@ public class StatusCommand : Command
                     databaseExists = File.Exists(dbPath),
                     qdrant = qdrantStatus
                 },
-                projects,
-                sharedParts = parts,
+                assets,
+                components = parts,
                 summary = new
                 {
-                    projectCount = projects.Count,
-                    assetCount = projects.Sum(p => p.Assets.Count),
-                    partCount = parts.Count
+                    assetCount = assets.Count,
+                    componentCount = parts.Count
                 }
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -142,36 +112,27 @@ public class StatusCommand : Command
             Console.WriteLine($"  Qdrant: {qdrantStatus}");
             Console.WriteLine();
 
-            // プロジェクト情報
-            if (projects.Count > 0)
+            // 装置情報
+            if (assets.Count > 0)
             {
-                Console.WriteLine($"Projects: {projects.Count}");
-                foreach (var proj in projects)
+                Console.WriteLine($"Assets: {assets.Count}");
+                foreach (var assetInfo in assets)
                 {
-                    Console.WriteLine($"  {proj.Name}");
-                    Console.WriteLine($"    Path: {proj.Path}");
-                    Console.WriteLine($"    ID: {proj.Id}");
-                    Console.WriteLine($"    Assets: {proj.Assets.Count}");
-
-                    if (!string.IsNullOrEmpty(project) || !string.IsNullOrEmpty(asset))
-                    {
-                        foreach (var assetInfo in proj.Assets)
-                        {
-                            Console.WriteLine($"      - {assetInfo.Name} ({assetInfo.DisplayName})");
-                        }
-                    }
+                    Console.WriteLine($"  {assetInfo.Name} ({assetInfo.DisplayName})");
+                    Console.WriteLine($"    ID: {assetInfo.Id}");
+                    Console.WriteLine($"    Path: {assetInfo.Path}");
                 }
                 Console.WriteLine();
             }
             else
             {
-                Console.WriteLine("Projects: (none registered)");
+                Console.WriteLine("Assets: (none)");
                 Console.WriteLine();
             }
 
             // 共有パーツ情報
-            Console.WriteLine($"Shared Parts: {parts.Count}");
-            if (parts.Count > 0 && string.IsNullOrEmpty(project))
+            Console.WriteLine($"Components: {parts.Count}");
+            if (parts.Count > 0)
             {
                 var byType = parts.GroupBy(p => p.Type);
                 foreach (var group in byType)
@@ -183,9 +144,8 @@ public class StatusCommand : Command
 
             // サマリー
             Console.WriteLine("Summary:");
-            Console.WriteLine($"  Projects: {projects.Count}");
-            Console.WriteLine($"  Assets: {projects.Sum(p => p.Assets.Count)}");
-            Console.WriteLine($"  Shared Parts: {parts.Count}");
+            Console.WriteLine($"  Assets: {assets.Count}");
+            Console.WriteLine($"  Components: {parts.Count}");
         }
     }
 
@@ -230,20 +190,12 @@ public class StatusCommand : Command
         }
     }
 
-    private class ProjectInfo
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Path { get; set; } = string.Empty;
-        public Guid Id { get; set; }
-        public DateTime RegisteredAt { get; set; }
-        public List<AssetInfo> Assets { get; set; } = new();
-    }
-
     private class AssetInfo
     {
         public string Name { get; set; } = string.Empty;
         public string? DisplayName { get; set; }
         public Guid Id { get; set; }
+        public string Path { get; set; } = string.Empty;
     }
 
     private class PartInfo
