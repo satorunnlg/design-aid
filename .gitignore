@@ -100,3 +100,4 @@ migration.sql
 
 # Claude Code
 .claude/
+nupkg/
