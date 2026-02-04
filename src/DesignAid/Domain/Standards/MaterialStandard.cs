@@ -1,5 +1,6 @@
 using DesignAid.Domain.Entities;
 using DesignAid.Domain.ValueObjects;
+using DesignAid.Infrastructure.FileSystem;
 
 namespace DesignAid.Domain.Standards;
 
@@ -84,6 +85,40 @@ public class MaterialStandard : DesignStandardBase
             .AddDetail("Material", $"未承認材料: {material}", ValidationSeverity.Error)
             .AddDetail("Recommendation", "承認済み材料を使用するか、材料承認を申請してください",
                 ValidationSeverity.Error);
+    }
+
+    /// <inheritdoc/>
+    public override StandardValidationResult Validate(PartJson partJson)
+    {
+        var skipResult = CheckApplicability(partJson);
+        if (skipResult != null)
+            return skipResult;
+
+        // メタデータから材料を取得
+        var material = partJson.Metadata?.TryGetValue("material", out var materialObj) == true
+            ? materialObj?.ToString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(material))
+        {
+            return StandardValidationResult.Pass("材料が指定されていません（任意項目）");
+        }
+
+        if (_approvedMaterials.Contains(material))
+        {
+            return StandardValidationResult.Pass($"材料 '{material}' は承認済みです");
+        }
+
+        if (_conditionalMaterials.Contains(material))
+        {
+            return StandardValidationResult.Fail(
+                $"材料 '{material}' は条件付き承認です",
+                "構造用途の場合は承認が必要です");
+        }
+
+        return StandardValidationResult.Fail(
+            $"材料 '{material}' は承認されていません",
+            "承認済み材料を使用するか、材料承認を申請してください");
     }
 
     /// <summary>

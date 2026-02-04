@@ -66,6 +66,9 @@ public abstract class DesignComponent
     /// <summary>装置との関連（多対多、ナビゲーションプロパティ）</summary>
     public ICollection<AssetComponent> AssetComponents { get; protected set; } = new List<AssetComponent>();
 
+    /// <summary>手配履歴（ナビゲーションプロパティ）</summary>
+    public ICollection<HandoverRecord> HandoverRecords { get; protected set; } = new List<HandoverRecord>();
+
     /// <summary>適用設計基準のIDリスト</summary>
     public List<string> StandardIds { get; protected set; } = new();
 
