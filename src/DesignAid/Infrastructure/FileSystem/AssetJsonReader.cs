@@ -162,13 +162,6 @@ public class AssetJsonReader
 
         await WriteAsync(assetDirectoryPath, assetJson, ct);
 
-        // components ディレクトリも作成
-        var componentsPath = Path.Combine(assetDirectoryPath, "components");
-        if (!Directory.Exists(componentsPath))
-        {
-            Directory.CreateDirectory(componentsPath);
-        }
-
         return assetJson;
     }
 

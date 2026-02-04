@@ -1,5 +1,6 @@
 using DesignAid.Domain.Entities;
 using DesignAid.Domain.ValueObjects;
+using DesignAid.Infrastructure.FileSystem;
 
 namespace DesignAid.Domain.Standards;
 
@@ -98,6 +99,47 @@ public class ToleranceStandard : DesignStandardBase
         };
 
         return ValidationResult.WithDetails(maxSeverity, message, details, component.PartNumber);
+    }
+
+    /// <inheritdoc/>
+    public override StandardValidationResult Validate(PartJson partJson)
+    {
+        var skipResult = CheckApplicability(partJson);
+        if (skipResult != null)
+            return skipResult;
+
+        var warnings = new List<string>();
+
+        // メタデータから公差関連情報をチェック
+        if (partJson.Metadata?.TryGetValue("general_tolerance", out var toleranceObj) == true
+            && toleranceObj?.ToString() is string tolerance)
+        {
+            var validTolerances = new[] { "JIS B 0405-m", "JIS B 0405-c", "JIS B 0405-v", "JIS B 0405-f" };
+
+            if (!validTolerances.Contains(tolerance, StringComparer.OrdinalIgnoreCase))
+            {
+                warnings.Add($"一般公差 '{tolerance}' は標準規格外です");
+            }
+        }
+
+        // 表面粗さチェック
+        if (partJson.Metadata?.TryGetValue("surface_roughness", out var roughnessObj) == true
+            && roughnessObj?.ToString() is string roughness)
+        {
+            if (TryParseRaValue(roughness, out var raValue) && raValue < 0.8)
+            {
+                warnings.Add($"表面粗さ Ra{raValue} は高精度仕上げが必要です（追加コスト注意）");
+            }
+        }
+
+        if (warnings.Count > 0)
+        {
+            return StandardValidationResult.Fail(
+                string.Join("; ", warnings),
+                "公差指定を見直してください");
+        }
+
+        return StandardValidationResult.Pass("公差は適切です");
     }
 
     /// <summary>
