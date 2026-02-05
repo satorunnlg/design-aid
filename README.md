@@ -47,6 +47,13 @@ Design Aid は、AWS CDK の思想を機械設計に適用し、**手配境界**
 - `daid backup --local-only` - ローカル ZIP のみ作成
 - `daid restore <source>` - バックアップから復元
 
+### アーカイブ（容量節約）
+- `daid archive asset <name>` - 装置をアーカイブ
+- `daid archive part <part-number>` - パーツをアーカイブ
+- `daid archive list` - アーカイブ一覧を表示
+- `daid archive restore asset <name>` - 装置を復元
+- `daid archive restore part <part-number>` - パーツを復元
+
 ### 状態確認
 - `daid status` - システム状態の表示
 

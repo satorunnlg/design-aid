@@ -732,6 +732,13 @@ daid status                       # システム状態表示
 # バックアップ
 daid backup                       # データバックアップ（S3/ZIP）
 
+# アーカイブ（容量節約）
+daid archive asset <name>              # 装置をアーカイブ
+daid archive part <part-number>        # パーツをアーカイブ
+daid archive list                      # アーカイブ一覧を表示
+daid archive restore asset <name>      # 装置をアーカイブから復元
+daid archive restore part <part-number> # パーツをアーカイブから復元
+
 # ツール管理
 daid update                       # ツールを最新版に更新
 ```
@@ -1087,6 +1094,72 @@ Parts: 40 total
   Fabricated: 25
   Purchased: 10
   Standard: 5
+```
+
+### daid archive
+
+装置やパーツをアーカイブして容量を節約する。アーカイブされたデータは ZIP 圧縮され、Qdrant のベクトルは維持されるため検索は引き続き可能。
+
+```bash
+# 装置をアーカイブ
+daid archive asset old-unit
+
+# パーツをアーカイブ
+daid archive part OLD-PART-001
+
+# アーカイブ一覧を表示
+daid archive list
+
+# JSON 形式で出力
+daid archive list --json
+
+# アーカイブから復元
+daid archive restore asset old-unit
+daid archive restore part OLD-PART-001
+```
+
+**出力例（アーカイブ時）:**
+```
+Archiving asset: old-unit
+  Source: data/assets/old-unit
+  Target: data/archive/assets/old-unit.zip
+
+Asset archived: old-unit
+  Original size: 15.2 MB
+  Archive size: 3.8 MB
+  Saved: 75.0%
+
+Note: Qdrant vectors are preserved for search.
+```
+
+**出力例（一覧表示）:**
+```
+Archived items:
+
+Assets:
+  old-unit (旧昇降ユニット)
+    Archived: 2026-02-05 10:30
+    Size: 3.8 MB (saved 11.4 MB)
+
+Parts:
+  OLD-PART-001 (旧ベースプレート)
+    Archived: 2026-02-05 10:35
+    Size: 512.0 KB (saved 1.5 MB)
+
+Total: 2 items, 4.3 MB (saved 12.9 MB)
+```
+
+**データ構造:**
+```text
+data/
+├── assets/                        # アクティブな装置
+├── components/                    # アクティブなパーツ
+├── archive/                       # アーカイブ領域
+│   ├── assets/
+│   │   └── old-unit.zip           # 圧縮された装置
+│   └── components/
+│       └── OLD-PART-001.zip       # 圧縮されたパーツ
+└── archive_index.json             # アーカイブ管理インデックス
 ```
 
 ## ドメインモデル
@@ -1646,7 +1719,6 @@ DesignAid.Configuration             # 設定
 ### 将来拡張予定
 
 - [ ] MCP サーバー対応（`daid mcp` - Claude Desktop 等との連携）
-- [ ] アーカイブ機能（`daid archive` - 容量節約、検索は維持）
 - [ ] GUI（Avalonia UI）の追加
 - [ ] CAD 連携（DXF/DWG 直接読み込み）
 - [ ] Excel 帳票自動生成
