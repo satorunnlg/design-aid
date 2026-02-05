@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3-alpha] - 2026-02-05
+
 ### Added
+
+- **Windows インストーラー対応**
+  - Inno Setup インストーラー（.exe）
+  - WiX MSI インストーラー（.msi）
+  - PATH 環境変数への自動追加オプション
+
+- **日本語リリースノート**
+  - CHANGELOG.md から自動抽出
+  - リリースページにインストール手順を記載
 
 - GitHub Actions CI/CD ワークフロー
 - GitHub Release による自動配布
@@ -21,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - README.md を公開リポジトリ用に整備
 - バッジ（CI、Release、License、.NET、Platform）を追加
+
+### Fixed
+
+- `update` コマンドの Trimming 対応（JSON Source Generator 使用）
+- バッチファイルのエンコーディングを UTF-8 に修正
 
 ## [0.1.0-alpha] - 2026-02-05
 
@@ -72,5 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
 - **Vector DB**: Qdrant 1.x（オプション）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.1.0-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.1.3-alpha...HEAD
+[0.1.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.0-alpha...v0.1.3-alpha
 [0.1.0-alpha]: https://github.com/satorunnlg/design-aid/releases/tag/v0.1.0-alpha
