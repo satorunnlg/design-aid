@@ -26,6 +26,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Get version from tag
+      id: version
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -39,7 +44,7 @@ jobs:
       run: dotnet test --configuration Release --verbosity normal
 
     - name: Publish
-      run: dotnet publish src/DesignAid --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true --output ./publish/${{ matrix.rid }}
+      run: dotnet publish src/DesignAid --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=${{ steps.version.outputs.VERSION }} --output ./publish/${{ matrix.rid }}
 
     - name: Archive (Linux/macOS)
       if: runner.os != 'Windows'
@@ -74,6 +79,13 @@ jobs:
         name: design-aid-win-x64
         path: artifacts
 
+    - name: Get version from tag
+      id: version
+      shell: pwsh
+      run: |
+        $version = "${{ github.ref_name }}".TrimStart('v')
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -81,14 +93,7 @@ jobs:
         dotnet-quality: 'preview'
 
     - name: Publish for installer
-      run: dotnet publish src/DesignAid --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true --output ./publish/win-x64
-
-    - name: Get version from tag
-      id: version
-      shell: pwsh
-      run: |
-        $version = "${{ github.ref_name }}".TrimStart('v')
-        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+      run: dotnet publish src/DesignAid --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=${{ steps.version.outputs.VERSION }} --output ./publish/win-x64
 
     # Inno Setup インストーラーのビルド
     - name: Build Inno Setup installer
