@@ -29,10 +29,10 @@ AWS CDK の思想を機械設計に適用し、**手配境界**を抽象化の�
 
 | カテゴリ | 技術 | バージョン | 備考 |
 |---------|------|-----------|------|
-| 言語 | C# | 12+ | |
-| フレームワーク | .NET | 8.0+ | |
+| 言語 | C# | 13 | |
+| フレームワーク | .NET | 10.0 | |
 | CLI フレームワーク | System.CommandLine | 2.x | サブコマンド構造 |
-| ORM | Entity Framework Core | 8.x | SQLite 連携 |
+| ORM | Entity Framework Core | 10.x | SQLite 連携 |
 | ローカル DB | SQLite | | EF Core 経由 |
 | Vector DB | Qdrant | 1.x | Docker で起動 |
 | Qdrant Client | Qdrant.Client | | NuGet パッケージ |
@@ -677,8 +677,6 @@ Collection: design_knowledge
     ├── part_number: string      # 型式
     ├── asset_id: UUID           # 装置内部ID
     ├── asset_name: string       # 装置名
-    ├── project_id: UUID         # プロジェクト内部ID
-    ├── project_name: string     # プロジェクト名
     ├── type: string (spec/memo/parameter)
     ├── content: string (元テキスト)
     ├── file_path: string
@@ -701,15 +699,20 @@ Collection: design_knowledge
 daid <command> [subcommand] [options]
 
 # 装置管理
-daid asset add <name>             # 装置を追加
-daid asset list                   # 装置一覧
-daid asset remove <name>          # 装置を削除
-daid asset link <parent> <child>  # 子装置を組み込み（SubAsset）
+daid asset add <name>                          # 装置を追加（git init 付き）
+daid asset add <name> --no-git                 # 装置を追加（git init なし）
+daid asset list                                # 装置一覧
+daid asset list --verbose                      # 装置一覧（詳細表示）
+daid asset remove <name>                       # 装置を削除
+daid asset link <parent> --child <child>       # 子装置を組み込み（SubAsset）
+daid asset unlink <parent> --child <child>     # 子装置リンクを解除
 
 # パーツ管理
-daid part add <part-number>       # パーツを追加
-daid part list                    # パーツ一覧
-daid part link <asset> <part>     # 装置にパーツを紐づけ
+daid part add <part-number>                    # パーツを追加（git init 付き）
+daid part add <part-number> --no-git           # パーツを追加（git init なし）
+daid part list                                 # パーツ一覧
+daid part link <part-number> --asset <asset>   # 装置にパーツを紐づけ
+daid part remove <part-number>                 # パーツを削除
 
 # 整合性・検証
 daid check                        # ハッシュ整合性チェック
@@ -718,6 +721,7 @@ daid sync                         # DB同期
 
 # 手配
 daid deploy                       # 手配パッケージ作成
+daid deploy --dry-run             # 手配パッケージ確認（ドライラン）
 
 # 検索
 daid search <query>               # 類似設計検索
@@ -734,10 +738,10 @@ daid update                       # ツールを最新版に更新
 
 ### daid asset add
 
-装置を追加する。
+装置を追加する。デフォルトで `git init` を実行し、装置ディレクトリを Git リポジトリとして初期化する。
 
 ```bash
-# 装置を追加
+# 装置を追加（git init 付き）
 daid asset add lifting-unit
 
 # 表示名を指定
@@ -745,6 +749,9 @@ daid asset add lifting-unit --display-name "昇降ユニット"
 
 # 説明を指定
 daid asset add lifting-unit --description "エレベータ更新案件の昇降機構"
+
+# Git リポジトリを初期化しない
+daid asset add lifting-unit --no-git
 ```
 
 **出力例:**
@@ -752,6 +759,7 @@ daid asset add lifting-unit --description "エレベータ更新案件の昇降�
 Asset created: lifting-unit
   Path: data/assets/lifting-unit
   ID: 660e8400-e29b-41d4-a716-446655440001
+  Git: initialized
 ```
 
 ### daid asset list
@@ -760,6 +768,9 @@ Asset created: lifting-unit
 
 ```bash
 daid asset list
+
+# 詳細表示（紐付けパーツ・子装置を表示）
+daid asset list --verbose
 
 # JSON 出力
 daid asset list --json
@@ -770,16 +781,30 @@ daid asset list --json
 Assets:
 
   lifting-unit (昇降ユニット)
-    ID: 660e8400-e29b-41d4-a716-446655440001
-    Parts: 15
-    SubAssets: 1
 
   control-panel (制御盤)
-    ID: 660e8400-e29b-41d4-a716-446655440002
-    Parts: 20
-    SubAssets: 0
 
-Total: 2 assets, 35 parts
+  safety-module (安全モジュール)
+
+Total: 3 assets
+```
+
+**出力例（--verbose）:**
+```
+Assets:
+
+  lifting-unit (昇降ユニット)
+    Linked Parts:
+      - BASE-PLATE-001 (x1)
+      - MTR-001 (x2)
+    Child Assets:
+      - safety-module (x1)
+
+  control-panel (制御盤)
+    Linked Parts: (none)
+    Child Assets: (none)
+
+Total: 2 assets
 ```
 
 ### daid asset link
@@ -788,43 +813,74 @@ Total: 2 assets, 35 parts
 
 ```bash
 # lifting-unit に safety-module を組み込む
-daid asset link lifting-unit safety-module
+daid asset link lifting-unit --child safety-module
 
 # 数量と備考を指定
-daid asset link lifting-unit safety-module --quantity 2 --notes "冗長構成"
+daid asset link lifting-unit --child safety-module --quantity 2 --notes "冗長構成"
 ```
 
 **出力例:**
 ```
-SubAsset linked: safety-module -> lifting-unit
+Child asset linked: safety-module to lifting-unit
   Quantity: 2
   Notes: 冗長構成
 ```
 
-### daid part add
+### daid asset unlink
 
-装置にパーツを追加する。
+子装置のリンクを解除する。
 
 ```bash
-# カレント装置にパーツを追加
+# lifting-unit から safety-module を解除
+daid asset unlink lifting-unit --child safety-module
+```
+
+**出力例:**
+```
+Child asset unlinked: safety-module from lifting-unit
+```
+
+### daid part add
+
+パーツを追加する。デフォルトで `git init` を実行し、パーツディレクトリを Git リポジトリとして初期化する。
+
+```bash
+# パーツを追加（git init 付き）
 daid part add SP-2026-PLATE-01 --type Fabricated --name "昇降ベースプレート"
 
-# 装置を指定
-daid part add SP-2026-PLATE-01 --asset lifting-unit --type Fabricated
+# Git リポジトリを初期化しない
+daid part add SP-2026-PLATE-01 --type Fabricated --name "ベースプレート" --no-git
 
 # メタデータ付き
-daid part add SP-2026-PLATE-01 --type Fabricated --material SS400
+daid part add SP-2026-PLATE-01 --type Fabricated --name "ベースプレート" --material SS400
 ```
 
 **出力例:**
 ```
 Part created: SP-2026-PLATE-01
-  Asset: lifting-unit
+  Name: 昇降ベースプレート
   Type: Fabricated
-  Path: .../components/SP-2026-PLATE-01/
+  Path: data/components/SP-2026-PLATE-01
+  ID: 770e8400-e29b-41d4-a716-446655440002
+  Git: initialized
+```
 
-Created:
-  - part.json
+### daid part link
+
+パーツを装置に紐づける。
+
+```bash
+# パーツを装置にリンク
+daid part link SP-2026-PLATE-01 --asset lifting-unit
+
+# 数量を指定
+daid part link SP-2026-PLATE-01 --asset lifting-unit --quantity 2
+```
+
+**出力例:**
+```
+Part linked: SP-2026-PLATE-01 to lifting-unit
+  Quantity: 2
 ```
 
 ### daid check
@@ -930,11 +986,25 @@ Sync complete: 1 new, 1 updated, 1 deleted
 # 変更があるパーツの手配パッケージを作成
 daid deploy
 
+# ドライラン（確認のみ、実際のデプロイは行わない）
+daid deploy --dry-run
+
 # 特定パーツのみ
 daid deploy --part SP-2026-PLATE-01
 
 # 出力先指定
 daid deploy --output /path/to/output
+```
+
+**出力例（--dry-run）:**
+```
+[DRY-RUN] 実際のデプロイは行われません
+
+Deploy candidates:
+  - SP-2026-PLATE-01 (Fabricated) - 成果物: 2ファイル
+  - MTR-001 (Purchased) - 成果物: 1ファイル
+
+Total: 2 parts ready for deploy
 ```
 
 **出力例:**
@@ -991,26 +1061,16 @@ Results:
 Found 3 similar designs
 ```
 
-### daid init（非推奨）
-
-`daid project add --create` を使用してください。
-
 ### daid status
 
-システム全体またはプロジェクトの状態を表示する。
+システム全体の状態を表示する。
 
 ```bash
 # システム全体
 daid status
-
-# 特定プロジェクト
-daid status --project elevator-renewal
-
-# 特定装置
-daid status --project elevator-renewal --asset lifting-unit
 ```
 
-**出力例（システム全体）:**
+**出力例:**
 ```
 Design Aid Status
 
@@ -1018,33 +1078,15 @@ System:
   Database: ~/.design-aid/design_aid.db
   Qdrant: Connected (localhost:6333)
 
-Projects: 2
-  elevator-renewal     3 assets, 45 parts
-  packaging-line-2026  5 assets, 120 parts
-
-Total: 165 parts (Draft: 15, Ordered: 130, Delivered: 20)
-```
-
-**出力例（プロジェクト指定）:**
-```
-Project: elevator-renewal
-  Path: C:/work/elevator-renewal
-  Last sync: 2026-02-02 10:30:00
-
-Assets:
+Assets: 3
   lifting-unit     (15 parts)
   control-panel    (20 parts)
-  safety-system    (10 parts)
+  safety-module    (5 parts)
 
-Parts Summary:
-  Total: 45
-  Draft: 5
-  Ordered: 35
-  Delivered: 5
-
-Recent Changes:
-  [lifting-unit] SP-2026-PLATE-01: Modified 2 hours ago (not synced)
-  [control-panel] PLC-001: Modified 1 day ago (synced)
+Parts: 40 total
+  Fabricated: 25
+  Purchased: 10
+  Standard: 5
 ```
 
 ## ドメインモデル
@@ -1603,6 +1645,8 @@ DesignAid.Configuration             # 設定
 
 ### 将来拡張予定
 
+- [ ] MCP サーバー対応（`daid mcp` - Claude Desktop 等との連携）
+- [ ] アーカイブ機能（`daid archive` - 容量節約、検索は維持）
 - [ ] GUI（Avalonia UI）の追加
 - [ ] CAD 連携（DXF/DWG 直接読み込み）
 - [ ] Excel 帳票自動生成
