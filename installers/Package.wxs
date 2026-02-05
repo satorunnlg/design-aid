@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Design Aid MSI Installer (WiX v4)
+  Build: dotnet tool install --global wix
+         wix build -o DesignAid.msi Package.wxs -d Version=0.1.2 -d SourceDir=..\publish\win-x64
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Design Aid"
+           Manufacturer="satorunnlg"
+           Version="$(var.Version)"
+           UpgradeCode="7A8E9F12-3B4C-5D6E-7F8A-9B0C1D2E3F4A"
+           Scope="perMachine"
+           Language="1041"
+           Codepage="932">
+
+    <SummaryInformation Description="Design Aid - 機械設計支援CLIツール"
+                        Manufacturer="satorunnlg" />
+
+    <!-- Upgrade handling -->
+    <MajorUpgrade DowngradeErrorMessage="新しいバージョンがインストールされています。" />
+
+    <!-- UI -->
+    <WixVariable Id="WixUILicenseRtf" Value="..\LICENSE.rtf" />
+
+    <!-- Features -->
+    <Feature Id="ProductFeature" Title="Design Aid" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="PathEnvVar" />
+    </Feature>
+
+    <!-- Install directory -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DesignAid">
+        <Component Id="PathEnvVar" Guid="8B9E0F13-4C5D-6E7F-8A9B-0C1D2E3F4A5B">
+          <Environment Id="PATH"
+                       Name="PATH"
+                       Value="[INSTALLFOLDER]"
+                       Permanent="no"
+                       Part="last"
+                       Action="set"
+                       System="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+  </Package>
+
+  <!-- File components -->
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="9C0F1A24-5D6E-7F8A-9B0C-1D2E3F4A5B6C">
+        <File Id="DesignAidExe"
+              Name="DesignAid.exe"
+              Source="$(var.SourceDir)\DesignAid.exe"
+              KeyPath="yes" />
+      </Component>
+      <Component Id="SqliteDll" Guid="0D1A2B35-6E7F-8A9B-0C1D-2E3F4A5B6C7D">
+        <File Id="SqliteDll"
+              Name="e_sqlite3.dll"
+              Source="$(var.SourceDir)\e_sqlite3.dll" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

@@ -61,8 +61,61 @@ jobs:
           design-aid-*.tar.gz
           design-aid-*.zip
 
-  release:
+  build-installers:
     needs: build
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: design-aid-win-x64
+        path: artifacts
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Publish for installer
+      run: dotnet publish src/DesignAid --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=true --output ./publish/win-x64
+
+    - name: Get version from tag
+      id: version
+      shell: pwsh
+      run: |
+        $version = "${{ github.ref_name }}".TrimStart('v')
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+    # Inno Setup インストーラーのビルド
+    - name: Build Inno Setup installer
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+      with:
+        path: installers/setup.iss
+        options: /DMyAppVersion=${{ steps.version.outputs.VERSION }}
+
+    # WiX MSI インストーラーのビルド
+    - name: Install WiX Toolset
+      run: dotnet tool install --global wix --version 5.0.0
+
+    - name: Build WiX MSI
+      shell: pwsh
+      run: |
+        wix build -o artifacts/DesignAid-${{ steps.version.outputs.VERSION }}.msi installers/Package.wxs -d Version=${{ steps.version.outputs.VERSION }} -d SourceDir=publish/win-x64
+
+    - name: Upload installer artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: installers
+        path: |
+          artifacts/DesignAid-Setup-*.exe
+          artifacts/DesignAid-*.msi
+
+  release:
+    needs: [build, build-installers]
     runs-on: ubuntu-latest
 
     steps:
@@ -83,13 +136,82 @@ jobs:
     - name: Pack NuGet
       run: dotnet pack src/DesignAid --configuration Release --output ./artifacts
 
+    # CHANGELOG.md から日本語リリースノートを抽出
+    - name: Extract release notes
+      id: release_notes
+      shell: bash
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+
+        # CHANGELOG.md から該当バージョンのセクションを抽出
+        # [Unreleased] または [バージョン] セクションを取得
+        if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+          # 特定バージョンのリリースノートを抽出
+          NOTES=$(awk "/## \[$VERSION\]/,/## \[/{if(/## \[/ && !/## \[$VERSION\]/)exit; print}" CHANGELOG.md | tail -n +2)
+        else
+          # [Unreleased] セクションを抽出
+          NOTES=$(awk '/## \[Unreleased\]/,/## \[/{if(/## \[/ && !/## \[Unreleased\]/)exit; print}' CHANGELOG.md | tail -n +2)
+        fi
+
+        # リリースノートが空の場合のデフォルトメッセージ
+        if [ -z "$NOTES" ]; then
+          NOTES="## 変更点
+
+        詳細は [CHANGELOG.md](https://github.com/satorunnlg/design-aid/blob/main/CHANGELOG.md) を参照してください。"
+        fi
+
+        # マルチラインの出力を GitHub Actions 形式で設定
+        echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+        echo "$NOTES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
           artifacts/design-aid-*.tar.gz
           artifacts/design-aid-*.zip
+          artifacts/DesignAid-Setup-*.exe
+          artifacts/DesignAid-*.msi
           artifacts/*.nupkg
-        generate_release_notes: true
+        body: |
+          # Design Aid ${{ github.ref_name }}
+
+          ${{ steps.release_notes.outputs.NOTES }}
+
+          ---
+
+          ## ダウンロード
+
+          | プラットフォーム | ファイル |
+          |-----------------|----------|
+          | Windows (インストーラー) | `DesignAid-Setup-*.exe` (推奨) |
+          | Windows (MSI) | `DesignAid-*.msi` |
+          | Windows (ポータブル) | `design-aid-win-x64.zip` |
+          | Linux | `design-aid-linux-x64.tar.gz` |
+          | macOS (Intel) | `design-aid-osx-x64.tar.gz` |
+          | macOS (Apple Silicon) | `design-aid-osx-arm64.tar.gz` |
+
+          ## インストール方法
+
+          ### Windows
+
+          **インストーラー（推奨）:**
+          1. `DesignAid-Setup-*.exe` をダウンロード
+          2. インストーラーを実行
+          3. 「PATH環境変数に追加する」にチェック
+          4. `daid --version` で動作確認
+
+          **ポータブル版:**
+          1. `design-aid-win-x64.zip` をダウンロード
+          2. 任意のフォルダに展開
+          3. 展開先を PATH に追加
+
+          ### Linux / macOS
+
+          ```bash
+          tar -xzf design-aid-<platform>.tar.gz -C ~/.local/bin/
+          chmod +x ~/.local/bin/daid
+          ```
         draft: false
         prerelease: ${{ contains(github.ref, '-') }}
