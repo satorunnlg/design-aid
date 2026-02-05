@@ -104,7 +104,8 @@ jobs:
     - name: Build WiX MSI
       shell: pwsh
       run: |
-        wix build -o artifacts/DesignAid-${{ steps.version.outputs.VERSION }}.msi installers/Package.wxs -d Version=${{ steps.version.outputs.VERSION }} -d SourceDir=publish/win-x64
+        cd installers
+        wix build -o ../artifacts/DesignAid-${{ steps.version.outputs.VERSION }}.msi Package.wxs -d Version=${{ steps.version.outputs.VERSION }} -d SourceDir=../publish/win-x64
 
     - name: Upload installer artifacts
       uses: actions/upload-artifact@v4
