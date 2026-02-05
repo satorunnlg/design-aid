@@ -17,13 +17,17 @@ Design Aid は、AWS CDK の思想を機械設計に適用し、**手配境界**
 ## 主な機能
 
 ### 装置管理
-- `daid asset add <name>` - 装置を追加
+- `daid asset add <name>` - 装置を追加（git init 付き）
+- `daid asset add <name> --no-git` - 装置を追加（git init なし）
 - `daid asset list` - 装置一覧を表示
+- `daid asset list --verbose` - 装置一覧を詳細表示
 - `daid asset remove <name>` - 装置を削除
 - `daid asset link <parent> --child <child>` - 子装置を組み込み
+- `daid asset unlink <parent> --child <child>` - 子装置リンクを解除
 
 ### パーツ管理
-- `daid part add <part-number>` - パーツを追加
+- `daid part add <part-number>` - パーツを追加（git init 付き）
+- `daid part add <part-number> --no-git` - パーツを追加（git init なし）
 - `daid part list` - パーツ一覧を表示
 - `daid part link <part-number> --asset <name>` - パーツを装置に紐付け
 - `daid part remove <part-number>` - パーツを削除
@@ -35,6 +39,7 @@ Design Aid は、AWS CDK の思想を機械設計に適用し、**手配境界**
 
 ### 手配・検索
 - `daid deploy` - 手配パッケージの作成
+- `daid deploy --dry-run` - 手配パッケージの確認（ドライラン）
 - `daid search <query>` - 類似設計のベクトル検索
 
 ### バックアップ・復元

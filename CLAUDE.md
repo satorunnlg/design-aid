@@ -153,7 +153,7 @@ If not defined, use standard development practices with these minimums:
 ### ベクトル管理
 - コレクション名: `design_knowledge`（または用途別に分離）
 - 埋め込みモデル: 設定で指定可能
-- メタデータ: `part_id`, `project_id`, `type` 等を付与
+- メタデータ: `part_id`, `asset_id`, `type` 等を付与
 
 ## Docker Rules (MANDATORY)
 
