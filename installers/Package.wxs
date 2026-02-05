@@ -16,6 +16,9 @@
     <SummaryInformation Description="Design Aid - 機械設計支援CLIツール"
                         Manufacturer="satorunnlg" />
 
+    <!-- Media: ファイルをMSIに埋め込む -->
+    <Media Id="1" Cabinet="data.cab" EmbedCab="yes" />
+
     <!-- Upgrade handling -->
     <MajorUpgrade DowngradeErrorMessage="新しいバージョンがインストールされています。" />
 
