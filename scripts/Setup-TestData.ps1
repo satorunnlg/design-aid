@@ -1,83 +1,88 @@
 # Setup-TestData.ps1
-# Test data setup script for Design Aid
+# ユニットテスト用サンプルデータセットアップスクリプト
+#
+# 現在のアーキテクチャ（Project 概念なし）に対応。
+# assets/ と components/ に直接データを配置する。
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Find project root from script location
+# スクリプトの場所からプロジェクトルートを取得
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 
 Write-Host "=== Design Aid Test Data Setup ===" -ForegroundColor Cyan
 Write-Host "Project Root: $ProjectRoot"
 
-# data directories
+# data ディレクトリ
 $DataDir = Join-Path $ProjectRoot "data"
+$AssetsDir = Join-Path $DataDir "assets"
 $ComponentsDir = Join-Path $DataDir "components"
-$ProjectsDir = Join-Path $DataDir "projects"
-$SampleProject = Join-Path $ProjectsDir "sample-project"
 
-# Check if sample project exists
-if (Test-Path $SampleProject) {
-    Write-Host "`nSample project exists. Updating hashes..." -ForegroundColor Yellow
-} else {
-    Write-Host "`nCreating sample project..." -ForegroundColor Green
+# サンプルデータのパス
+$SampleAsset = Join-Path $AssetsDir "sample-asset"
+$SamplePart = Join-Path $ComponentsDir "SP-TEST-001"
 
-    # Create directory structure (new architecture: components are shared)
-    $Dirs = @(
-        "$SampleProject\assets\lifting-unit",
-        "$ComponentsDir\SP-TEST-001"
-    )
-    foreach ($Dir in $Dirs) {
-        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-    }
-
-    # .da-project
-    $DaProjectContent = @"
-{
-  "project_id": "$([guid]::NewGuid().ToString())",
-  "name": "sample-project",
-  "registered_at": "$((Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+# data ディレクトリが存在しない場合は作成
+if (-not (Test-Path $DataDir)) {
+    Write-Host "`nCreating data directory..." -ForegroundColor Yellow
+    New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $AssetsDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $ComponentsDir -Force | Out-Null
 }
-"@
-    [System.IO.File]::WriteAllText("$SampleProject\.da-project", $DaProjectContent, [System.Text.UTF8Encoding]::new($false))
 
-    # asset.json
-    $AssetContent = @"
+# サンプル装置が存在するかチェック
+if (Test-Path $SampleAsset) {
+    Write-Host "`nSample asset exists. Updating..." -ForegroundColor Yellow
+} else {
+    Write-Host "`nCreating sample asset..." -ForegroundColor Green
+    New-Item -ItemType Directory -Path $SampleAsset -Force | Out-Null
+}
+
+# asset.json
+$AssetId = [guid]::NewGuid().ToString()
+$AssetContent = @"
 {
-  "id": "$([guid]::NewGuid().ToString())",
-  "name": "lifting-unit",
-  "display_name": "Lifting Unit",
-  "description": "Main lifting mechanism",
+  "id": "$AssetId",
+  "name": "sample-asset",
+  "display_name": "Sample Asset",
+  "description": "Test data for unit tests",
   "created_at": "$((Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"))"
 }
 "@
-    $AssetPath = "$SampleProject\assets\lifting-unit"
-    [System.IO.File]::WriteAllText("$AssetPath\asset.json", $AssetContent, [System.Text.UTF8Encoding]::new($false))
+$AssetJsonPath = Join-Path $SampleAsset "asset.json"
+[System.IO.File]::WriteAllText($AssetJsonPath, $AssetContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "  asset.json created" -ForegroundColor Gray
 
-    # drawing.txt (sample drawing) - now in shared components directory
-    $DrawingContent = @"
+# サンプルパーツが存在するかチェック
+if (Test-Path $SamplePart) {
+    Write-Host "`nSample part exists. Updating hashes..." -ForegroundColor Yellow
+} else {
+    Write-Host "`nCreating sample part..." -ForegroundColor Green
+    New-Item -ItemType Directory -Path $SamplePart -Force | Out-Null
+}
+
+# drawing.txt（サンプル成果物）
+$DrawingContent = @"
 Sample Drawing Content
 This is a placeholder for a DXF/DWG file.
 Part: SP-TEST-001
 Material: SS400
 Surface: Plating
 "@
-    $PartDir = "$ComponentsDir\SP-TEST-001"
-    [System.IO.File]::WriteAllText("$PartDir\drawing.txt", $DrawingContent, [System.Text.UTF8Encoding]::new($false))
-}
+$DrawingPath = Join-Path $SamplePart "drawing.txt"
+[System.IO.File]::WriteAllText($DrawingPath, $DrawingContent, [System.Text.UTF8Encoding]::new($false))
 
-# Compute hash for component (now in shared location)
-$DrawingFile = "$ComponentsDir\SP-TEST-001\drawing.txt"
-if (Test-Path $DrawingFile) {
-    $Hash = Get-FileHash -Path $DrawingFile -Algorithm SHA256
-    $HashValue = "sha256:" + $Hash.Hash.ToLower()
-    Write-Host "drawing.txt hash: $HashValue" -ForegroundColor Gray
+# ハッシュ計算
+$Hash = Get-FileHash -Path $DrawingPath -Algorithm SHA256
+$HashValue = "sha256:" + $Hash.Hash.ToLower()
+Write-Host "  drawing.txt hash: $HashValue" -ForegroundColor Gray
 
-    # Update part.json (no asset_id - relationship is managed via DB junction table)
-    $PartJsonContent = @"
+# part.json
+$PartId = [guid]::NewGuid().ToString()
+$PartJsonContent = @"
 {
-  "id": "770e8400-e29b-41d4-a716-446655440002",
+  "id": "$PartId",
   "part_number": "SP-TEST-001",
   "name": "Test Plate",
   "type": "Fabricated",
@@ -96,15 +101,31 @@ if (Test-Path $DrawingFile) {
   "memo": "Sample test part"
 }
 "@
+$PartJsonPath = Join-Path $SamplePart "part.json"
+[System.IO.File]::WriteAllText($PartJsonPath, $PartJsonContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "  part.json created" -ForegroundColor Green
 
-    $PartJsonPath = "$ComponentsDir\SP-TEST-001\part.json"
-    [System.IO.File]::WriteAllText($PartJsonPath, $PartJsonContent, [System.Text.UTF8Encoding]::new($false))
-    Write-Host "part.json updated" -ForegroundColor Green
+# asset_links.json（パーツとの紐付け）
+$AssetLinksContent = @"
+{
+  "parts": [
+    {
+      "part_number": "SP-TEST-001",
+      "quantity": 1,
+      "notes": "Test linkage"
+    }
+  ],
+  "sub_assets": []
 }
+"@
+$AssetLinksPath = Join-Path $SampleAsset "asset_links.json"
+[System.IO.File]::WriteAllText($AssetLinksPath, $AssetLinksContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "  asset_links.json created" -ForegroundColor Green
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
-Write-Host "Sample project: $SampleProject"
-Write-Host "Shared components: $ComponentsDir"
+Write-Host "Sample data:"
+Write-Host "  Asset: $SampleAsset"
+Write-Host "  Part:  $SamplePart"
 Write-Host ""
 Write-Host "Test commands:" -ForegroundColor Yellow
 Write-Host "  dotnet test                                    # All tests"

@@ -298,9 +298,111 @@ daid deploy --dry-run
 
 ---
 
-## Phase 7: バックアップと復元
+## Phase 7: アーカイブ（容量節約）
 
-### 7.1 ローカルバックアップ
+### 7.1 アーカイブ一覧（空）
+
+```bash
+daid archive list
+
+# 期待結果: "No archived items." と表示される
+```
+
+### 7.2 装置をアーカイブ
+
+```bash
+# control-panel をアーカイブ
+daid archive asset control-panel
+
+# 期待結果:
+# - data/archive/assets/control-panel.zip が作成される
+# - data/archive_index.json にエントリが追加される
+# - data/assets/control-panel/ が削除される
+# - 圧縮率が表示される
+```
+
+### 7.3 パーツをアーカイブ
+
+```bash
+# BOLT-M10-30 をアーカイブ
+daid archive part BOLT-M10-30
+
+# 期待結果:
+# - data/archive/components/BOLT-M10-30.zip が作成される
+# - data/archive_index.json にエントリが追加される
+# - data/components/BOLT-M10-30/ が削除される
+```
+
+### 7.4 アーカイブ一覧（確認）
+
+```bash
+daid archive list
+
+# 期待結果:
+# - Assets: control-panel が表示される
+# - Parts: BOLT-M10-30 が表示される
+# - サイズと節約量が表示される
+```
+
+### 7.5 アーカイブ一覧（JSON形式）
+
+```bash
+daid archive list --json
+
+# 期待結果: JSON形式でアーカイブ情報が出力される
+```
+
+### 7.6 装置一覧・パーツ一覧（アーカイブ後）
+
+```bash
+daid asset list
+daid part list
+
+# 期待結果:
+# - control-panel が装置一覧に表示されない
+# - BOLT-M10-30 がパーツ一覧に表示されない
+```
+
+### 7.7 アーカイブからパーツを復元
+
+```bash
+daid archive restore part BOLT-M10-30
+
+# 期待結果:
+# - data/components/BOLT-M10-30/ が復元される
+# - アーカイブファイルが削除される
+# - archive_index.json からエントリが削除される
+```
+
+### 7.8 アーカイブから装置を復元
+
+```bash
+daid archive restore asset control-panel
+
+# 期待結果:
+# - data/assets/control-panel/ が復元される
+# - アーカイブファイルが削除される
+# - archive_index.json からエントリが削除される
+```
+
+### 7.9 復元後の確認
+
+```bash
+daid asset list
+daid part list
+daid archive list
+
+# 期待結果:
+# - control-panel が装置一覧に表示される
+# - BOLT-M10-30 がパーツ一覧に表示される
+# - アーカイブ一覧が空になる
+```
+
+---
+
+## Phase 8: バックアップと復元
+
+### 8.1 ローカルバックアップ
 
 ```bash
 # ローカルに ZIP を作成
@@ -309,7 +411,7 @@ daid backup --local-only
 # 期待結果: design-aid-backup_YYYYMMDD_HHMMSS.zip が作成される
 ```
 
-### 7.2 バックアップファイルの確認
+### 8.2 バックアップファイルの確認
 
 ```bash
 ls -la *.zip
@@ -317,7 +419,7 @@ ls -la *.zip
 # 期待結果: バックアップ ZIP ファイルが存在する
 ```
 
-### 7.3 バックアップファイル名を記録
+### 8.3 バックアップファイル名を記録
 
 ```bash
 # ここで作成された ZIP ファイル名をメモする
@@ -326,9 +428,9 @@ ls -la *.zip
 
 ---
 
-## Phase 8: クリーンアップ（削除操作）
+## Phase 9: クリーンアップ（削除操作）
 
-### 8.1 子装置リンクの解除
+### 9.1 子装置リンクの解除
 
 ```bash
 # 子装置のリンクを解除
@@ -337,7 +439,7 @@ daid asset unlink lifting-unit --child safety-module
 # 期待結果: safety-module と lifting-unit のリンクが解除される
 ```
 
-### 8.2 パーツの削除
+### 9.2 パーツの削除
 
 ```bash
 # 確認プロンプトに y で回答
@@ -350,7 +452,7 @@ daid part remove BASE-PLATE-001
 # 期待結果: パーツが削除される
 ```
 
-### 8.3 パーツ一覧（空確認）
+### 9.3 パーツ一覧（空確認）
 
 ```bash
 daid part list
@@ -358,7 +460,7 @@ daid part list
 # 期待結果: パーツがない
 ```
 
-### 8.4 装置の削除
+### 9.4 装置の削除
 
 ```bash
 # 確認プロンプトに y で回答
@@ -371,7 +473,7 @@ daid asset remove safety-module
 # 期待結果: 装置が削除される
 ```
 
-### 8.5 装置一覧（空確認）
+### 9.5 装置一覧（空確認）
 
 ```bash
 daid asset list
@@ -381,19 +483,19 @@ daid asset list
 
 ---
 
-## Phase 9: 復元テスト
+## Phase 10: 復元テスト
 
-### 9.1 バックアップから復元
+### 10.1 バックアップから復元
 
 ```bash
-# Phase 7.3 でメモした ZIP ファイル名を使用
+# Phase 8.3 でメモした ZIP ファイル名を使用
 # 確認プロンプトに y で回答
 daid restore ./design-aid-backup_YYYYMMDD_HHMMSS.zip
 
 # 期待結果: データが復元される
 ```
 
-### 9.2 復元後のデータ確認
+### 10.2 復元後のデータ確認
 
 ```bash
 daid asset list
@@ -405,7 +507,7 @@ daid part list
 # - 3つのパーツが復元されている
 ```
 
-### 9.3 再クリーンアップ
+### 10.3 再クリーンアップ
 
 ```bash
 # 復元されたデータを再度削除（確認プロンプトに y で回答）
@@ -422,9 +524,9 @@ daid asset remove safety-module
 
 ---
 
-## Phase 10: 完全クリーンアップ
+## Phase 11: 完全クリーンアップ
 
-### 10.1 バックアップファイルの削除
+### 11.1 バックアップファイルの削除
 
 ```bash
 rm -f *.zip
@@ -432,7 +534,7 @@ rm -f *.zip
 # 期待結果: ZIP ファイルが削除される
 ```
 
-### 10.2 data ディレクトリの削除
+### 11.2 data ディレクトリの削除
 
 ```bash
 # data ディレクトリを完全に削除
@@ -454,10 +556,11 @@ ls -la data/ 2>&1 || echo "data directory removed successfully"
 - [ ] Phase 4: status, check, sync, verify が正常動作
 - [ ] Phase 5: search が正常動作（または適切なエラー）
 - [ ] Phase 6: deploy --dry-run が正常動作
-- [ ] Phase 7: backup が正常動作
-- [ ] Phase 8: 全削除操作が正常動作
-- [ ] Phase 9: restore が正常動作
-- [ ] Phase 10: data/ ディレクトリが完全に削除可能
+- [ ] Phase 7: archive asset/part/list/restore が正常動作
+- [ ] Phase 8: backup が正常動作
+- [ ] Phase 9: 全削除操作が正常動作
+- [ ] Phase 10: restore が正常動作
+- [ ] Phase 11: data/ ディレクトリが完全に削除可能
 
 ## 備考
 

@@ -1449,7 +1449,46 @@ volumes:
 |------|------|--------------|--------|
 | ユニットテスト | ドメインモデル、サービス | xUnit | 最優先 |
 | 統合テスト | SQLite 連携、Qdrant 連携 | xUnit + TestContainers | 高 |
-| E2E テスト | CLI コマンド全体 | xUnit | 中 |
+| CLI 統合テスト | CLI コマンド全体 | スクリプト (PowerShell/bash) | 高 |
+
+### テスト関連ドキュメント・スクリプト
+
+| ファイル | 用途 |
+|---------|------|
+| [docs/TEST_SCENARIO.md](./docs/TEST_SCENARIO.md) | CLI コマンドテストシナリオ（手動・自動共通） |
+| [scripts/test-all.ps1](./scripts/test-all.ps1) | CLI 統合テストスクリプト（Windows PowerShell） |
+| [scripts/test-all.sh](./scripts/test-all.sh) | CLI 統合テストスクリプト（Linux/Mac bash） |
+| [scripts/Run-Tests.ps1](./scripts/Run-Tests.ps1) | ユニットテスト実行スクリプト |
+| [scripts/Setup-TestData.ps1](./scripts/Setup-TestData.ps1) | ユニットテスト用サンプルデータ作成 |
+
+### コマンド追加時のテスト要件（CRITICAL）
+
+**新しいコマンドを追加する際は、必ず以下の手順を実施すること:**
+
+1. **テストシナリオの検討・追加**
+   - `docs/TEST_SCENARIO.md` に新コマンドのテストシナリオを追加
+   - 正常系・異常系・境界値を網羅
+
+2. **テストスクリプトの更新**
+   - `scripts/test-all.ps1` に新コマンドのテストを追加
+   - `scripts/test-all.sh` に新コマンドのテストを追加
+
+3. **テストの実施・確認**
+   - テストスクリプトを実行し、全テストがパスすることを確認
+   - 既存テストへの影響がないことを確認
+
+```bash
+# テストの実行方法
+
+# ユニットテスト
+dotnet test
+
+# CLI 統合テスト（Windows）
+.\scripts\test-all.ps1
+
+# CLI 統合テスト（Linux/Mac）
+./scripts/test-all.sh
+```
 
 ### テスト例
 
@@ -1727,5 +1766,16 @@ DesignAid.Configuration             # 設定
 
 ### 関連ドキュメント
 
-将来 GUI 追加時:
+#### テスト関連
+- [docs/TEST_SCENARIO.md](./docs/TEST_SCENARIO.md) - CLI コマンドテストシナリオ
+
+#### スクリプト
+| スクリプト | 用途 |
+|-----------|------|
+| [scripts/test-all.ps1](./scripts/test-all.ps1) | CLI 統合テスト（PowerShell） |
+| [scripts/test-all.sh](./scripts/test-all.sh) | CLI 統合テスト（bash） |
+| [scripts/Run-Tests.ps1](./scripts/Run-Tests.ps1) | ユニットテスト実行 |
+| [scripts/Setup-TestData.ps1](./scripts/Setup-TestData.ps1) | テストデータ作成 |
+
+#### 将来追加予定
 - [GUI_POLICY.md](./GUI_POLICY.md) - GUI設計ポリシー（GUI追加時に作成）
