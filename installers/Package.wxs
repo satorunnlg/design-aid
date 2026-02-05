@@ -48,9 +48,9 @@
   <Fragment>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="MainExecutable" Guid="9C0F1A24-5D6E-7F8A-9B0C-1D2E3F4A5B6C">
-        <File Id="DesignAidExe"
-              Name="DesignAid.exe"
-              Source="$(var.SourceDir)\DesignAid.exe"
+        <File Id="DaidExe"
+              Name="daid.exe"
+              Source="$(var.SourceDir)\daid.exe"
               KeyPath="yes" />
       </Component>
       <Component Id="SqliteDll" Guid="0D1A2B35-6E7F-8A9B-0C1D-2E3F4A5B6C7D">

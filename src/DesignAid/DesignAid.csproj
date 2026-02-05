@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
+    <!-- 出力ファイル名 -->
+    <AssemblyName>daid</AssemblyName>
+
     <!-- グローバルツール設定 -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>daid</ToolCommandName>

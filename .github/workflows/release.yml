@@ -81,7 +81,7 @@ jobs:
         dotnet-quality: 'preview'
 
     - name: Publish for installer
-      run: dotnet publish src/DesignAid --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=true --output ./publish/win-x64
+      run: dotnet publish src/DesignAid --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true --output ./publish/win-x64
 
     - name: Get version from tag
       id: version
