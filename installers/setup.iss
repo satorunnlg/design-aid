@@ -68,31 +68,8 @@ begin
   Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
 end;
 
-const
-  SMTO_ABORTIFHUNG = 2;
-  WM_SETTINGCHANGE = $001A;
-  HWND_BROADCAST = $FFFF;
-
-function SendMessageTimeout(hWnd: Integer; Msg: Cardinal; wParam: Integer; lParam: String;
-  fuFlags: Cardinal; uTimeout: Cardinal; var lpdwResult: Cardinal): Cardinal;
-  external 'SendMessageTimeoutW@user32.dll stdcall';
-
-procedure BroadcastEnvironmentChange();
-var
-  Res: Cardinal;
-begin
-  // 環境変数の変更を全ウィンドウに通知
-  SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, 'Environment', SMTO_ABORTIFHUNG, 5000, Res);
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-  begin
-    // 環境変数の変更をブロードキャスト
-    BroadcastEnvironmentChange();
-  end;
-end;
+// 環境変数変更の通知は ChangesEnvironment=yes により Inno Setup が自動で行う
+// 追加のコードは不要
 
 [Run]
 ; コマンドプロンプトを開いてバージョン確認（ウィンドウを開いたままにする）
