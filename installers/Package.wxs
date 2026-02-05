@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Design Aid MSI Installer (WiX v4)
-  Build: dotnet tool install --global wix
-         wix build -o DesignAid.msi Package.wxs -d Version=0.1.2 -d SourceDir=..\publish\win-x64
+  Build: dotnet tool install wix (global)
+         wix build -o DesignAid.msi Package.wxs -d Version=0.1.2 -d SourceDir=publish\win-x64
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Design Aid"
@@ -20,7 +20,7 @@
     <MajorUpgrade DowngradeErrorMessage="新しいバージョンがインストールされています。" />
 
     <!-- UI -->
-    <WixVariable Id="WixUILicenseRtf" Value="..\LICENSE.rtf" />
+    <WixVariable Id="WixUILicenseRtf" Value="LICENSE.rtf" />
 
     <!-- Features -->
     <Feature Id="ProductFeature" Title="Design Aid" Level="1">
