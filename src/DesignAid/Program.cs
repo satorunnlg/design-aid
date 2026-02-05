@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text;
 using DesignAid.Commands;
+using DesignAid.Commands.Archive;
 using DesignAid.Commands.Asset;
 using DesignAid.Commands.Part;
 
@@ -38,6 +39,9 @@ public class Program
             // バックアップ・復元
             new BackupCommand(),
             new RestoreCommand(),
+
+            // アーカイブ（容量節約）
+            new ArchiveCommand(),
 
             // ツール管理
             new UpdateCommand()

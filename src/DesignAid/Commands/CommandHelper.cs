@@ -85,4 +85,20 @@ public static class CommandHelper
 
         return Path.Combine(GetDataDirectory(), "design_aid.db");
     }
+
+    /// <summary>
+    /// アーカイブディレクトリのパスを取得する。
+    /// </summary>
+    public static string GetArchiveDirectory()
+    {
+        return Path.Combine(GetDataDirectory(), "archive");
+    }
+
+    /// <summary>
+    /// アーカイブインデックスファイルのパスを取得する。
+    /// </summary>
+    public static string GetArchiveIndexPath()
+    {
+        return Path.Combine(GetDataDirectory(), "archive_index.json");
+    }
 }
