@@ -5,9 +5,47 @@ using System.IO.Compression;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace DesignAid.Commands;
+
+// Trimming 対応のための Source Generator
+[JsonSerializable(typeof(GitHubRelease))]
+[JsonSerializable(typeof(GitHubRelease[]))]
+[JsonSerializable(typeof(GitHubAsset))]
+[JsonSerializable(typeof(GitHubAsset[]))]
+internal partial class UpdateJsonContext : JsonSerializerContext
+{
+}
+
+// GitHub API レスポンス用のモデル（Source Generator 用にクラス外に定義）
+internal sealed class GitHubRelease
+{
+    [JsonPropertyName("tag_name")]
+    public string? TagName { get; set; }
+
+    [JsonPropertyName("html_url")]
+    public string? HtmlUrl { get; set; }
+
+    [JsonPropertyName("prerelease")]
+    public bool Prerelease { get; set; }
+
+    [JsonPropertyName("assets")]
+    public GitHubAsset[]? Assets { get; set; }
+}
+
+internal sealed class GitHubAsset
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
+
+    [JsonPropertyName("browser_download_url")]
+    public string BrowserDownloadUrl { get; set; } = "";
+}
 
 /// <summary>
 /// ツールを最新版に更新するコマンド。
@@ -206,13 +244,13 @@ public class UpdateCommand : Command
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 url = $"{GitHubApiBase}/repos/{GitHubRepo}/releases";
-                var releases = await client.GetFromJsonAsync<GitHubRelease[]>(url);
+                var releases = await client.GetFromJsonAsync(url, UpdateJsonContext.Default.GitHubReleaseArray);
                 return releases?.FirstOrDefault();
             }
             return null;
         }
 
-        return await response.Content.ReadFromJsonAsync<GitHubRelease>();
+        return await response.Content.ReadFromJsonAsync(UpdateJsonContext.Default.GitHubRelease);
     }
 
     private static async Task DownloadAssetAsync(string url, string destPath)
@@ -366,18 +404,19 @@ public class UpdateCommand : Command
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // Windows: バッチファイルで更新
+            // Windows: バッチファイルで更新（UTF-8 + BOM で日本語対応）
             var batchPath = Path.Combine(tempDir, "update.bat");
             var batchContent = $"""
                 @echo off
-                echo 更新を適用しています...
+                chcp 65001 >nul
+                echo Applying update...
                 timeout /t 2 /nobreak >nul
                 xcopy /Y /E "{Path.GetDirectoryName(newExePath)}\*" "{currentDir}\"
-                echo 更新が完了しました。
+                echo Update completed.
                 rd /s /q "{tempDir}"
                 pause
                 """;
-            await File.WriteAllTextAsync(batchPath, batchContent, System.Text.Encoding.GetEncoding("shift_jis"));
+            await File.WriteAllTextAsync(batchPath, batchContent, new System.Text.UTF8Encoding(false));
 
             Process.Start(new ProcessStartInfo
             {
@@ -439,33 +478,5 @@ public class UpdateCommand : Command
             i++;
         }
         return $"{size:F1} {suffixes[i]}";
-    }
-
-    // GitHub API レスポンス用のモデル
-    private sealed class GitHubRelease
-    {
-        [JsonPropertyName("tag_name")]
-        public string? TagName { get; set; }
-
-        [JsonPropertyName("html_url")]
-        public string? HtmlUrl { get; set; }
-
-        [JsonPropertyName("prerelease")]
-        public bool Prerelease { get; set; }
-
-        [JsonPropertyName("assets")]
-        public GitHubAsset[]? Assets { get; set; }
-    }
-
-    private sealed class GitHubAsset
-    {
-        [JsonPropertyName("name")]
-        public string Name { get; set; } = "";
-
-        [JsonPropertyName("size")]
-        public long Size { get; set; }
-
-        [JsonPropertyName("browser_download_url")]
-        public string BrowserDownloadUrl { get; set; } = "";
     }
 }
