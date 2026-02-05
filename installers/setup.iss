@@ -68,17 +68,33 @@ begin
   Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+const
+  SMTO_ABORTIFHUNG = 2;
+  WM_SETTINGCHANGE = $001A;
+  HWND_BROADCAST = $FFFF;
+
+function SendMessageTimeout(hWnd: Integer; Msg: Cardinal; wParam: Integer; lParam: String;
+  fuFlags: Cardinal; uTimeout: Cardinal; var lpdwResult: Cardinal): Cardinal;
+  external 'SendMessageTimeoutW@user32.dll stdcall';
+
+procedure BroadcastEnvironmentChange();
 var
-  ResultCode: Integer;
+  Res: Cardinal;
+begin
+  // 環境変数の変更を全ウィンドウに通知
+  SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, 'Environment', SMTO_ABORTIFHUNG, 5000, Res);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    // Notify Windows of environment variable change
-    Exec('cmd.exe', '/c setx DAID_INSTALLED 1 >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    // 環境変数の変更をブロードキャスト
+    BroadcastEnvironmentChange();
   end;
 end;
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--version"; \
-    Flags: nowait postinstall skipifsilent; Description: "バージョンを確認"
+; コマンドプロンプトを開いてバージョン確認（ウィンドウを開いたままにする）
+Filename: "cmd.exe"; Parameters: "/k ""{app}\{#MyAppExeName}"" --version"; \
+    Flags: postinstall skipifsilent unchecked; Description: "コマンドプロンプトでバージョンを確認"
