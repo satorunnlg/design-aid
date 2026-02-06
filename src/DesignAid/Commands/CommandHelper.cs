@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace DesignAid.Commands;
 
 /// <summary>
@@ -100,5 +102,48 @@ public static class CommandHelper
     public static string GetArchiveIndexPath()
     {
         return Path.Combine(GetDataDirectory(), "archive_index.json");
+    }
+
+    /// <summary>
+    /// config.json から Qdrant 設定を取得する。
+    /// 環境変数でホスト・ポートをオーバーライド可能。
+    /// </summary>
+    public static (string host, int port, string collectionName) GetQdrantConfig()
+    {
+        var host = Environment.GetEnvironmentVariable("DA_QDRANT_HOST") ?? "localhost";
+        var portStr = Environment.GetEnvironmentVariable("DA_QDRANT_GRPC_PORT")
+                      ?? Environment.GetEnvironmentVariable("DA_QDRANT_PORT");
+        var port = int.TryParse(portStr, out var p) ? p : 6334;
+        var collectionName = "design_knowledge";
+
+        // config.json からコレクション名を読み取る
+        var configPath = Path.Combine(GetDataDirectory(), "config.json");
+        if (File.Exists(configPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("qdrant", out var qdrant))
+                {
+                    if (qdrant.TryGetProperty("collection_name", out var cn))
+                        collectionName = cn.GetString() ?? collectionName;
+
+                    // config.json のホスト・ポートも環境変数がなければ使用
+                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DA_QDRANT_HOST"))
+                        && qdrant.TryGetProperty("host", out var h))
+                        host = h.GetString() ?? host;
+
+                    if (portStr == null && qdrant.TryGetProperty("grpc_port", out var gp))
+                        port = gp.GetInt32();
+                }
+            }
+            catch
+            {
+                // config.json の読み取り失敗時はデフォルト値を使用
+            }
+        }
+
+        return (host, port, collectionName);
     }
 }

@@ -246,17 +246,12 @@ public class SyncCommand : Command
     {
         Console.WriteLine("Syncing to Qdrant...");
 
-        var host = Environment.GetEnvironmentVariable("DA_QDRANT_HOST") ?? "localhost";
-        // Qdrant.Client は gRPC を使用するため、デフォルトは 6334
-        var portStr = Environment.GetEnvironmentVariable("DA_QDRANT_GRPC_PORT")
-                      ?? Environment.GetEnvironmentVariable("DA_QDRANT_PORT")
-                      ?? "6334";
-        var port = int.TryParse(portStr, out var p) ? p : 6334;
+        var (host, port, collectionName) = CommandHelper.GetQdrantConfig();
 
         try
         {
             var embeddingProvider = new MockEmbeddingProvider();
-            using var qdrantService = new QdrantService(host, port, embeddingProvider);
+            using var qdrantService = new QdrantService(host, port, embeddingProvider, collectionName);
 
             var connected = qdrantService.CheckConnectionAsync().GetAwaiter().GetResult();
             if (!connected)

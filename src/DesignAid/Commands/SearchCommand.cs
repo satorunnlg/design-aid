@@ -35,14 +35,12 @@ public class SearchCommand : Command
             try
             {
                 var embeddingProvider = new MockEmbeddingProvider();
-                // Qdrant.Client は gRPC を使用するため、デフォルトは 6334
-                var portStr = Environment.GetEnvironmentVariable("DA_QDRANT_GRPC_PORT")
-                              ?? Environment.GetEnvironmentVariable("DA_QDRANT_PORT");
-                var port = int.TryParse(portStr, out var p) ? p : 6334;
+                var (host, port, collectionName) = CommandHelper.GetQdrantConfig();
                 qdrantService = new QdrantService(
-                    host: Environment.GetEnvironmentVariable("DA_QDRANT_HOST") ?? "localhost",
+                    host: host,
                     port: port,
-                    embeddingProvider: embeddingProvider);
+                    embeddingProvider: embeddingProvider,
+                    collectionName: collectionName);
 
                 useQdrant = await qdrantService.CheckConnectionAsync();
             }
