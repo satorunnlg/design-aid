@@ -14,10 +14,10 @@
     <ToolCommandName>daid</ToolCommandName>
     <PackageId>DesignAid</PackageId>
     <Version>0.1.0</Version>
-    <Authors>Your Name</Authors>
+    <Authors>satorunnlg</Authors>
     <Description>Design Aid - 機械設計支援システム CLI</Description>
-    <PackageProjectUrl>https://github.com/yourusername/design-aid</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/yourusername/design-aid</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/satorunnlg/design-aid</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/satorunnlg/design-aid</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- バージョン表示からコミットハッシュを除外 -->

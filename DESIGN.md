@@ -1757,12 +1757,110 @@ DesignAid.Configuration             # 設定
 
 ### 将来拡張予定
 
-- [ ] MCP サーバー対応（`daid mcp` - Claude Desktop 等との連携）
+- [ ] MCP サーバー対応（`daid mcp` - Claude Desktop 等との連携）→ 下記「MCP サーバー設計検討」参照
 - [ ] GUI（Avalonia UI）の追加
 - [ ] CAD 連携（DXF/DWG 直接読み込み）
 - [ ] Excel 帳票自動生成
 - [ ] 3D CAD 対応（STEP/IGES）
 - [ ] チーム共有機能（サーバー版）
+
+### MCP サーバー設計検討（2026-02-06 調査）
+
+**ステータス**: 実装見送り（C# SDK 安定版リリース待ち）
+
+#### MCP (Model Context Protocol) とは
+
+Anthropic が公開したオープンプロトコル。AI アプリケーション（Claude Desktop、VS Code Copilot 等）と
+外部ツール・データソースを標準化された方法で接続する仕組み。JSON-RPC 2.0 ベース。
+Microsoft、OpenAI、Google DeepMind 等も採用しており、事実上の業界標準。
+
+#### 技術選定
+
+| 項目 | 選定 | 理由 |
+|------|------|------|
+| SDK | `ModelContextProtocol` (NuGet) | Microsoft + Anthropic 共同メンテナンスの公式 C# SDK |
+| トランスポート | **STDIO** | CLI ツールとの親和性が最も高い。Claude Desktop / VS Code が直接プロセス起動 |
+| 起動方法 | `daid mcp` サブコマンド | 既存の System.CommandLine 体系と統合 |
+
+**SDK 状況（2026-02-06 時点）**:
+- 最新: `ModelContextProtocol 0.7.0-preview.1`（プレビュー版）
+- 破壊的変更のリスクあり（v0.5.0 で大規模リファクタリング実施済み）
+- 安定版（1.0）リリース後に実装開始を推奨
+
+#### 公開予定の MCP ツール
+
+| MCP ツール | 対応 CLI コマンド | 説明 |
+|-----------|-----------------|------|
+| `ListParts` | `daid part list` | パーツ一覧を取得 |
+| `GetPartDetails` | part.json 読み取り | パーツの詳細情報を返却 |
+| `CheckIntegrity` | `daid check` | ハッシュ整合性をチェック |
+| `SearchDesigns` | `daid search` | 類似設計をベクトル検索（Qdrant） |
+| `VerifyStandards` | `daid verify` | 設計基準バリデーション |
+| `GetAssetParts` | `daid asset list --verbose` | 装置に紐づくパーツ情報を取得 |
+| `GetStatus` | `daid status` | システム状態を取得 |
+
+#### 実装構成（予定）
+
+```
+src/DesignAid/
+├── Commands/
+│   └── McpCommand.cs             # daid mcp サブコマンド（MCP サーバー起動）
+├── Mcp/                          # MCP サーバー関連
+│   ├── DesignAidMcpTools.cs      # ツール定義（[McpServerToolType]）
+│   ├── DesignAidMcpResources.cs  # リソース定義（パーツ情報等）
+│   └── DesignAidMcpPrompts.cs    # プロンプト定義（設計レビュー等）
+```
+
+**追加パッケージ**:
+```bash
+dotnet add src/DesignAid package ModelContextProtocol --prerelease
+```
+
+※ `Microsoft.Extensions.Hosting` は既存の DI 構成で対応済み
+
+#### 起動・設定例
+
+```bash
+# MCP サーバーモードで起動
+daid mcp
+```
+
+**Claude Desktop (`claude_desktop_config.json`)**:
+```json
+{
+  "mcpServers": {
+    "design-aid": {
+      "command": "daid",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**VS Code (`.vscode/mcp.json`)**:
+```json
+{
+  "servers": {
+    "design-aid": {
+      "type": "stdio",
+      "command": "daid",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### 実装時の注意事項
+
+1. **既存サービスの再利用**: `PartService`, `HashService`, `SearchService` 等を DI で注入
+2. **Qdrant グレースフルデグラデーション**: Qdrant 未接続時は `SearchDesigns` ツールを無効化し、他ツールは継続
+3. **ログ出力**: STDIO トランスポート使用時、ログは stderr に出力（stdout は MCP 通信に使用）
+4. **将来の HTTP 対応**: チーム共有機能実装時に Streamable HTTP トランスポートを追加検討
+
+#### 実装開始条件
+
+- [ ] `ModelContextProtocol` NuGet パッケージが安定版（1.0 以上）をリリース
+- [ ] MCP 仕様のメジャーバージョンが安定
 
 ### 関連ドキュメント
 
