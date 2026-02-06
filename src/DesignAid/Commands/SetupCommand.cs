@@ -64,6 +64,16 @@ public class SetupCommand : Command
             var configPath = Path.Combine(dataDir, "config.json");
             if (!File.Exists(configPath) || force)
             {
+                // データディレクトリ名からユニークなコレクション名を生成
+                var dirName = new DirectoryInfo(dataDir).Name;
+                var collectionSuffix = dirName.ToLowerInvariant()
+                    .Replace(" ", "_")
+                    .Replace("-", "_");
+                // Qdrant コレクション名に使用できない文字を除去
+                collectionSuffix = System.Text.RegularExpressions.Regex.Replace(
+                    collectionSuffix, @"[^a-z0-9_]", "");
+                var collectionName = $"design_knowledge_{collectionSuffix}";
+
                 var config = new LocalConfig
                 {
                     Database = new LocalDatabaseConfig { Path = "design_aid.db" },
@@ -72,7 +82,7 @@ public class SetupCommand : Command
                         Host = "localhost",
                         GrpcPort = 6334,
                         Enabled = true,
-                        CollectionName = "design_knowledge"
+                        CollectionName = collectionName
                     },
                     Embedding = new LocalEmbeddingConfig
                     {
