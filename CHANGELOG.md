@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6-alpha] - 2026-02-07
+
+### Fixed
+
+- **Qdrant コレクション名の環境別分離**
+  - `setup` 時にデータディレクトリ名からユニークなコレクション名を自動生成
+  - 複数環境で Qdrant データが混在する問題を解消
+  - `search`, `sync`, `status` コマンドが config.json のコレクション名を使用するよう修正
+  - `status` コマンドでコレクション名を表示
+
+- **パッケージメタデータの修正**
+  - Authors、PackageProjectUrl、RepositoryUrl のプレースホルダーを正しい値に更新
+
+### Added
+
+- **MCP サーバー設計検討** を DESIGN.md に追記（実装は SDK 安定版待ち）
+
 ## [0.1.3-alpha] - 2026-02-05
 
 ### Added
@@ -88,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
 - **Vector DB**: Qdrant 1.x（オプション）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.1.3-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...HEAD
+[0.1.6-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.5-alpha...v0.1.6-alpha
 [0.1.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.0-alpha...v0.1.3-alpha
 [0.1.0-alpha]: https://github.com/satorunnlg/design-aid/releases/tag/v0.1.0-alpha
