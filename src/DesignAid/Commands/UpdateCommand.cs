@@ -404,26 +404,35 @@ public class UpdateCommand : Command
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // Windows: バッチファイルで更新（UTF-8 + BOM で日本語対応）
+            // Windows: バッチファイルで更新（管理者権限が必要な場合はUAC昇格）
             var batchPath = Path.Combine(tempDir, "update.bat");
+            var sourceDir = Path.GetDirectoryName(newExePath)!;
             var batchContent = $"""
                 @echo off
                 chcp 65001 >nul
                 echo Applying update...
                 timeout /t 2 /nobreak >nul
-                xcopy /Y /E "{Path.GetDirectoryName(newExePath)}\*" "{currentDir}\"
-                echo Update completed.
-                rd /s /q "{tempDir}"
+                xcopy /Y /E "{sourceDir}\*" "{currentDir}\"
+                if errorlevel 1 (
+                    echo ERROR: Update failed. Access denied.
+                    pause
+                    exit /b 1
+                )
+                echo Update completed successfully.
+                rd /s /q "{tempDir}" 2>nul
                 pause
                 """;
             await File.WriteAllTextAsync(batchPath, batchContent, new System.Text.UTF8Encoding(false));
 
+            // Program Files 配下の場合は管理者権限で実行
+            var needsElevation = currentDir.Contains("Program Files", StringComparison.OrdinalIgnoreCase);
             Process.Start(new ProcessStartInfo
             {
                 FileName = "cmd.exe",
                 Arguments = $"/c \"{batchPath}\"",
                 UseShellExecute = true,
-                CreateNoWindow = false
+                CreateNoWindow = false,
+                Verb = needsElevation ? "runas" : ""
             });
         }
         else
