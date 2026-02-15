@@ -186,6 +186,7 @@ dotnet format
 
 ## ドキュメント
 
+- [docs/COMMAND_REFERENCE.md](./docs/COMMAND_REFERENCE.md) - コマンドリファレンス（全コマンド・設定キー・データ構造の詳細）
 - [DESIGN.md](./DESIGN.md) - 詳細な設計ドキュメント
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - コントリビューションガイド
 - [CHANGELOG.md](./CHANGELOG.md) - 変更履歴
