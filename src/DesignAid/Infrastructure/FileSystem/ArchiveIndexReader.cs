@@ -106,6 +106,6 @@ public class ArchiveEntry
     [JsonPropertyName("archive_size_bytes")]
     public long ArchiveSizeBytes { get; set; }
 
-    [JsonPropertyName("qdrant_ids")]
-    public List<string>? QdrantIds { get; set; }
+    [JsonPropertyName("vector_ids")]
+    public List<string>? VectorIds { get; set; }
 }

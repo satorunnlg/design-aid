@@ -44,21 +44,13 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ProjectId")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("UpdatedAt")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Name");
-
-                    b.HasIndex("ProjectId");
-
-                    b.HasIndex("ProjectId", "Name")
+                    b.HasIndex("Name")
                         .IsUnique();
 
                     b.ToTable("Assets", (string)null);
@@ -92,6 +84,36 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                     b.HasIndex("PartId");
 
                     b.ToTable("AssetComponents", (string)null);
+                });
+
+            modelBuilder.Entity("DesignAid.Domain.Entities.AssetSubAsset", b =>
+                {
+                    b.Property<string>("ParentAssetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChildAssetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Quantity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("ParentAssetId", "ChildAssetId");
+
+                    b.HasIndex("ChildAssetId");
+
+                    b.HasIndex("ParentAssetId");
+
+                    b.ToTable("AssetSubAssets", (string)null);
                 });
 
             modelBuilder.Entity("DesignAid.Domain.Entities.DesignComponent", b =>
@@ -210,6 +232,9 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                     b.Property<string>("DeliveryDate")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DesignComponentId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
@@ -228,6 +253,8 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DesignComponentId");
+
                     b.HasIndex("PartId");
 
                     b.HasIndex("Status");
@@ -235,32 +262,69 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                     b.ToTable("HandoverHistory", (string)null);
                 });
 
-            modelBuilder.Entity("DesignAid.Domain.Entities.Project", b =>
+            modelBuilder.Entity("DesignAid.Infrastructure.Persistence.SettingsEntry", b =>
                 {
-                    b.Property<string>("Id")
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("Settings", (string)null);
+                });
+
+            modelBuilder.Entity("DesignAid.Infrastructure.VectorSearch.VectorIndexEntry", b =>
+                {
+                    b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AssetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssetName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("CreatedAt")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Description")
-                        .HasMaxLength(2000)
-                        .HasColumnType("TEXT");
+                    b.Property<int>("Dimensions")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<string>("DirectoryPath")
+                    b.Property<byte[]>("Embedding")
                         .IsRequired()
-                        .HasMaxLength(1024)
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("FilePath")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DisplayName")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
+                    b.Property<string>("PartId")
                         .IsRequired()
-                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PartNumber")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProjectName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("UpdatedAt")
@@ -269,10 +333,9 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Name")
-                        .IsUnique();
+                    b.HasIndex("PartId");
 
-                    b.ToTable("Projects", (string)null);
+                    b.ToTable("VectorIndex", (string)null);
                 });
 
             modelBuilder.Entity("DesignAid.Domain.Entities.FabricatedPart", b =>
@@ -347,17 +410,6 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                     b.HasDiscriminator().HasValue("Standard");
                 });
 
-            modelBuilder.Entity("DesignAid.Domain.Entities.Asset", b =>
-                {
-                    b.HasOne("DesignAid.Domain.Entities.Project", "Project")
-                        .WithMany("Assets")
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Project");
-                });
-
             modelBuilder.Entity("DesignAid.Domain.Entities.AssetComponent", b =>
                 {
                     b.HasOne("DesignAid.Domain.Entities.Asset", "Asset")
@@ -377,8 +429,31 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
                     b.Navigation("Part");
                 });
 
+            modelBuilder.Entity("DesignAid.Domain.Entities.AssetSubAsset", b =>
+                {
+                    b.HasOne("DesignAid.Domain.Entities.Asset", "ChildAsset")
+                        .WithMany("ParentAssets")
+                        .HasForeignKey("ChildAssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DesignAid.Domain.Entities.Asset", "ParentAsset")
+                        .WithMany("ChildAssets")
+                        .HasForeignKey("ParentAssetId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChildAsset");
+
+                    b.Navigation("ParentAsset");
+                });
+
             modelBuilder.Entity("DesignAid.Domain.Entities.HandoverRecord", b =>
                 {
+                    b.HasOne("DesignAid.Domain.Entities.DesignComponent", null)
+                        .WithMany("HandoverRecords")
+                        .HasForeignKey("DesignComponentId");
+
                     b.HasOne("DesignAid.Domain.Entities.DesignComponent", "Part")
                         .WithMany()
                         .HasForeignKey("PartId")
@@ -391,16 +466,17 @@ namespace DesignAid.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DesignAid.Domain.Entities.Asset", b =>
                 {
                     b.Navigation("AssetComponents");
+
+                    b.Navigation("ChildAssets");
+
+                    b.Navigation("ParentAssets");
                 });
 
             modelBuilder.Entity("DesignAid.Domain.Entities.DesignComponent", b =>
                 {
                     b.Navigation("AssetComponents");
-                });
 
-            modelBuilder.Entity("DesignAid.Domain.Entities.Project", b =>
-                {
-                    b.Navigation("Assets");
+                    b.Navigation("HandoverRecords");
                 });
 #pragma warning restore 612, 618
         }

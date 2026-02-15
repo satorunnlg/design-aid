@@ -150,23 +150,22 @@ daid update  # ツールを最新版に更新
 - **言語**: C# 13 / .NET 10.0
 - **CLI**: System.CommandLine 2.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
-- **Vector DB**: Qdrant 1.x（オプション）
+- **ベクトル検索**: SQLite BLOB + HNSW（組み込み、外部依存なし）
 
 ## 前提条件
 
 - .NET 10.0 SDK（ソースからビルドする場合）
-- Docker（Qdrant 使用時、オプション）
 
-## Qdrant（オプション）
+## ベクトル検索
 
-類似設計検索を使用する場合：
+類似設計検索は SQLite + HNSW ライブラリで組み込み実装されており、外部サービス（Docker 等）は不要です。
 
 ```bash
-# Qdrant の起動
-docker compose up -d
+# ベクトルインデックスの構築
+daid sync --include-vectors
 
-# Qdrant を有効化
-daid config set qdrant.enabled true
+# 類似設計の検索
+daid search "油圧シリンダ"
 ```
 
 ## 開発

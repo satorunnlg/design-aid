@@ -2,19 +2,17 @@ using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace DesignAid.Commands;
 
 /// <summary>
 /// da backup - データディレクトリをバックアップ（ZIP/S3）。
-/// Qdrant スナップショットと SQLite バックアップを含む。
+/// SQLite バックアップとデータファイルを含む。
 /// </summary>
 public class BackupCommand : Command
 {
-    public BackupCommand() : base("backup", "データディレクトリをバックアップする（Qdrant/DB dump含む）")
+    public BackupCommand() : base("backup", "データディレクトリをバックアップする（DB dump含む）")
     {
         var dataPathOption = new Option<string?>(
             aliases: ["--data-path", "-d"],
@@ -22,15 +20,15 @@ public class BackupCommand : Command
 
         var bucketOption = new Option<string?>(
             aliases: ["--bucket", "-b"],
-            description: "S3 バケット名（省略時: config.json の設定を使用）");
+            description: "S3 バケット名（省略時: DB 設定を使用）");
 
         var prefixOption = new Option<string?>(
             aliases: ["--prefix"],
-            description: "S3 プレフィックス（省略時: config.json の設定を使用）");
+            description: "S3 プレフィックス（省略時: DB 設定を使用）");
 
         var profileOption = new Option<string?>(
             aliases: ["--profile", "-p"],
-            description: "AWS CLI プロファイル名（省略時: config.json の設定を使用）");
+            description: "AWS CLI プロファイル名（省略時: DB 設定を使用）");
 
         var outputOption = new Option<string?>(
             aliases: ["--output", "-o"],
@@ -44,10 +42,6 @@ public class BackupCommand : Command
             aliases: ["--local-only", "-l"],
             description: "ローカルに ZIP を作成するのみ（S3 にアップロードしない）");
 
-        var skipQdrantOption = new Option<bool>(
-            aliases: ["--skip-qdrant"],
-            description: "Qdrant スナップショットをスキップ");
-
         var skipDbOption = new Option<bool>(
             aliases: ["--skip-db"],
             description: "SQLite バックアップをスキップ（ファイルコピーのみ）");
@@ -59,10 +53,9 @@ public class BackupCommand : Command
         AddOption(outputOption);
         AddOption(dryRunOption);
         AddOption(localOnlyOption);
-        AddOption(skipQdrantOption);
         AddOption(skipDbOption);
 
-        Handler = CommandHandler.Create<string?, string?, string?, string?, string?, bool, bool, bool, bool>(ExecuteAsync);
+        Handler = CommandHandler.Create<string?, string?, string?, string?, string?, bool, bool, bool>(ExecuteAsync);
     }
 
     private async Task<int> ExecuteAsync(
@@ -73,7 +66,6 @@ public class BackupCommand : Command
         string? output,
         bool dryRun,
         bool localOnly,
-        bool skipQdrant,
         bool skipDb)
     {
         try
@@ -86,27 +78,13 @@ public class BackupCommand : Command
                 return 1;
             }
 
-            // 設定ファイルから設定を読み込み
-            var configPath = Path.Combine(dataDir, "config.json");
-            LocalBackupConfig backupConfig = new();
-            LocalQdrantConfig qdrantConfig = new();
-
-            if (File.Exists(configPath))
-            {
-                var configJson = await File.ReadAllTextAsync(configPath);
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-                };
-                var config = JsonSerializer.Deserialize<LocalConfig>(configJson, options);
-                backupConfig = config?.Backup ?? new LocalBackupConfig();
-                qdrantConfig = config?.Qdrant ?? new LocalQdrantConfig();
-            }
+            // DB から設定を読み込み
+            var settings = CommandHelper.LoadSettings();
 
             // オプションで上書き
-            var s3Bucket = bucket ?? backupConfig.S3Bucket;
-            var s3Prefix = prefix ?? backupConfig.S3Prefix;
-            var awsProfile = profile ?? backupConfig.AwsProfile;
+            var s3Bucket = bucket ?? settings.Get("backup.s3_bucket", "");
+            var s3Prefix = prefix ?? settings.Get("backup.s3_prefix", "design-aid-backup/");
+            var awsProfile = profile ?? settings.Get("backup.aws_profile", "default");
 
             // 一時ディレクトリを作成
             var tempDir = Path.Combine(Path.GetTempPath(), $"design-aid-backup-{Guid.NewGuid():N}");
@@ -122,7 +100,7 @@ public class BackupCommand : Command
                 var dbPath = Path.Combine(dataDir, "design_aid.db");
                 if (File.Exists(dbPath) && !skipDb)
                 {
-                    Console.WriteLine("[1/3] SQLite データベースをバックアップ中...");
+                    Console.WriteLine("[1/2] SQLite データベースをバックアップ中...");
                     if (!dryRun)
                     {
                         var dbBackupPath = Path.Combine(tempDir, "design_aid.db");
@@ -136,52 +114,15 @@ public class BackupCommand : Command
                 }
                 else if (skipDb)
                 {
-                    Console.WriteLine("[1/3] SQLite バックアップをスキップ（--skip-db）");
+                    Console.WriteLine("[1/2] SQLite バックアップをスキップ（--skip-db）");
                 }
                 else
                 {
-                    Console.WriteLine("[1/3] SQLite データベースが見つかりません（スキップ）");
+                    Console.WriteLine("[1/2] SQLite データベースが見つかりません（スキップ）");
                 }
 
-                // 2. Qdrant スナップショット
-                if (!skipQdrant && qdrantConfig.Enabled)
-                {
-                    Console.WriteLine("[2/3] Qdrant スナップショットを作成中...");
-                    if (!dryRun)
-                    {
-                        var qdrantSnapshotPath = Path.Combine(tempDir, "qdrant_snapshot");
-                        Directory.CreateDirectory(qdrantSnapshotPath);
-                        var snapshotResult = await CreateQdrantSnapshotAsync(
-                            qdrantConfig.Host,
-                            qdrantConfig.GrpcPort - 1, // HTTP ポートは gRPC - 1
-                            qdrantConfig.CollectionName,
-                            qdrantSnapshotPath);
-
-                        if (snapshotResult)
-                        {
-                            Console.WriteLine($"      完了: {qdrantSnapshotPath}");
-                        }
-                        else
-                        {
-                            Console.WriteLine("      警告: Qdrant スナップショットの作成に失敗（続行）");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("      (ドライラン: スキップ)");
-                    }
-                }
-                else if (skipQdrant)
-                {
-                    Console.WriteLine("[2/3] Qdrant スナップショットをスキップ（--skip-qdrant）");
-                }
-                else
-                {
-                    Console.WriteLine("[2/3] Qdrant が無効（スキップ）");
-                }
-
-                // 3. データファイルをコピー
-                Console.WriteLine("[3/3] データファイルをコピー中...");
+                // 2. データファイルをコピー（HNSW インデックスは再構築可能なので含めなくてもよい）
+                Console.WriteLine("[2/2] データファイルをコピー中...");
                 if (!dryRun)
                 {
                     CopyDataFiles(dataDir, tempDir, skipDb);
@@ -245,7 +186,7 @@ public class BackupCommand : Command
                     return 1;
                 }
 
-                var s3Key = s3Prefix.TrimEnd('/') + "/" + zipFileName;
+                var s3Key = (s3Prefix ?? "design-aid-backup/").TrimEnd('/') + "/" + zipFileName;
                 var s3Uri = $"s3://{s3Bucket}/{s3Key}";
 
                 Console.WriteLine();
@@ -263,7 +204,7 @@ public class BackupCommand : Command
                 }
 
                 // AWS CLI を使用してアップロード
-                var result = await UploadToS3Async(zipFilePath, s3Uri, awsProfile);
+                var result = await UploadToS3Async(zipFilePath, s3Uri, awsProfile ?? "default");
 
                 // 一時ファイルを削除
                 if (File.Exists(zipFilePath) && output == null)
@@ -311,85 +252,6 @@ public class BackupCommand : Command
         var vacuumCommand = connection.CreateCommand();
         vacuumCommand.CommandText = $"VACUUM INTO '{destPath.Replace("'", "''")}'";
         await vacuumCommand.ExecuteNonQueryAsync();
-    }
-
-    /// <summary>
-    /// Qdrant のスナップショットを作成してダウンロードする。
-    /// </summary>
-    private static async Task<bool> CreateQdrantSnapshotAsync(
-        string host,
-        int httpPort,
-        string collectionName,
-        string outputDir)
-    {
-        try
-        {
-            using var httpClient = new HttpClient
-            {
-                BaseAddress = new Uri($"http://{host}:{httpPort}"),
-                Timeout = TimeSpan.FromMinutes(5)
-            };
-
-            // スナップショットを作成
-            var createResponse = await httpClient.PostAsync(
-                $"/collections/{collectionName}/snapshots",
-                null);
-
-            if (!createResponse.IsSuccessStatusCode)
-            {
-                Console.WriteLine($"      Qdrant エラー: {createResponse.StatusCode}");
-                return false;
-            }
-
-            var createResult = await createResponse.Content.ReadFromJsonAsync<JsonDocument>();
-            var snapshotName = createResult?.RootElement
-                .GetProperty("result")
-                .GetProperty("name")
-                .GetString();
-
-            if (string.IsNullOrEmpty(snapshotName))
-            {
-                Console.WriteLine("      スナップショット名を取得できませんでした");
-                return false;
-            }
-
-            // スナップショットをダウンロード
-            var downloadResponse = await httpClient.GetAsync(
-                $"/collections/{collectionName}/snapshots/{snapshotName}");
-
-            if (!downloadResponse.IsSuccessStatusCode)
-            {
-                Console.WriteLine($"      ダウンロードエラー: {downloadResponse.StatusCode}");
-                return false;
-            }
-
-            var snapshotPath = Path.Combine(outputDir, $"{collectionName}_{snapshotName}");
-            await using var fileStream = File.Create(snapshotPath);
-            await downloadResponse.Content.CopyToAsync(fileStream);
-
-            // メタデータファイルを作成（復元時に使用）
-            var metadataPath = Path.Combine(outputDir, "metadata.json");
-            var metadata = new
-            {
-                collectionName,
-                snapshotName,
-                createdAt = DateTime.UtcNow.ToString("o")
-            };
-            await File.WriteAllTextAsync(metadataPath,
-                JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }));
-
-            return true;
-        }
-        catch (HttpRequestException ex)
-        {
-            Console.WriteLine($"      Qdrant 接続エラー: {ex.Message}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"      エラー: {ex.Message}");
-            return false;
-        }
     }
 
     /// <summary>

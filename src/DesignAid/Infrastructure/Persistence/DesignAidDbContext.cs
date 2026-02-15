@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.Persistence.Configurations;
+using DesignAid.Infrastructure.VectorSearch;
 
 namespace DesignAid.Infrastructure.Persistence;
 
@@ -36,6 +37,12 @@ public class DesignAidDbContext : DbContext
 
     /// <summary>設計基準</summary>
     public DbSet<DesignStandard> Standards => Set<DesignStandard>();
+
+    /// <summary>ベクトルインデックス</summary>
+    public DbSet<VectorIndexEntry> VectorIndex => Set<VectorIndexEntry>();
+
+    /// <summary>設定値</summary>
+    public DbSet<SettingsEntry> Settings => Set<SettingsEntry>();
 
     /// <summary>
     /// パラメータなしコンストラクタ（開発用）。
@@ -80,5 +87,7 @@ public class DesignAidDbContext : DbContext
         modelBuilder.ApplyConfiguration(new AssetComponentConfiguration());
         modelBuilder.ApplyConfiguration(new HandoverRecordConfiguration());
         modelBuilder.ApplyConfiguration(new DesignStandardConfiguration());
+        modelBuilder.ApplyConfiguration(new VectorIndexConfiguration());
+        modelBuilder.ApplyConfiguration(new SettingsConfiguration());
     }
 }

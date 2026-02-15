@@ -80,7 +80,7 @@ public class ArchivePartCommand : Command
                 ArchivePath = archivePath,
                 OriginalSizeBytes = originalSize,
                 ArchiveSizeBytes = archiveSize,
-                QdrantIds = null // 将来的にQdrantのIDを保持
+                VectorIds = null // 将来的にベクトルインデックスのIDを保持
             };
             await archiveIndexReader.AddEntryAsync(indexPath, entry);
 
@@ -95,7 +95,7 @@ public class ArchivePartCommand : Command
             Console.WriteLine($"  Archive size: {FormatSize(archiveSize)}");
             Console.WriteLine($"  Saved: {savedPercent:F1}%");
             Console.WriteLine();
-            Console.WriteLine("Note: Qdrant vectors are preserved for search.");
+            Console.WriteLine("Note: ベクトルインデックスは検索用に保持されます。");
         }
         catch (Exception ex)
         {

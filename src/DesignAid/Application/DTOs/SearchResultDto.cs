@@ -29,7 +29,7 @@ public class SearchResultDto
 /// </summary>
 public class SearchHitDto
 {
-    /// <summary>ポイントID（Qdrant）</summary>
+    /// <summary>ポイントID</summary>
     public Guid Id { get; set; }
 
     /// <summary>類似度スコア（0.0-1.0）</summary>

@@ -4,7 +4,9 @@ using System.Text.Json;
 using DesignAid.Application.Services;
 using DesignAid.Infrastructure.Embedding;
 using DesignAid.Infrastructure.FileSystem;
-using DesignAid.Infrastructure.Qdrant;
+using DesignAid.Infrastructure.Persistence;
+using DesignAid.Infrastructure.VectorSearch;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands;
 
@@ -16,7 +18,7 @@ public class SyncCommand : Command
     public SyncCommand() : base("sync", "ファイルシステムとDBを同期")
     {
         this.Add(new Option<bool>("--dry-run", "変更確認のみ（実際の同期は行わない）"));
-        this.Add(new Option<bool>("--include-vectors", "Qdrantへの同期も含む"));
+        this.Add(new Option<bool>("--include-vectors", "ベクトルインデックスへの同期も含む"));
         this.Add(new Option<bool>("--force", "強制同期（ハッシュを再計算）"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
@@ -176,6 +178,13 @@ public class SyncCommand : Command
             if (changes.Count == 0)
             {
                 Console.WriteLine("変更はありません");
+
+                // ファイル変更がなくてもベクトルインデックス同期は実行する
+                if (includeVectors && !dryRun)
+                {
+                    Console.WriteLine();
+                    SyncVectorIndex(componentsDir, partJsonReader);
+                }
                 return;
             }
 
@@ -232,37 +241,44 @@ public class SyncCommand : Command
             if (includeVectors && !dryRun)
             {
                 Console.WriteLine();
-                SyncToQdrant(componentsDir, partJsonReader);
+                SyncVectorIndex(componentsDir, partJsonReader);
             }
             else if (includeVectors && dryRun)
             {
                 Console.WriteLine();
-                Console.WriteLine("[INFO] dry-run モードのため Qdrant への同期はスキップされました");
+                Console.WriteLine("[INFO] dry-run モードのためベクトルインデックスへの同期はスキップされました");
             }
         }
     }
 
-    private static void SyncToQdrant(string componentsDir, PartJsonReader partJsonReader)
+    private static void SyncVectorIndex(string componentsDir, PartJsonReader partJsonReader)
     {
-        Console.WriteLine("Syncing to Qdrant...");
-
-        var (host, port, collectionName) = CommandHelper.GetQdrantConfig();
+        Console.WriteLine("Syncing to vector index...");
 
         try
         {
-            var embeddingProvider = new MockEmbeddingProvider();
-            using var qdrantService = new QdrantService(host, port, embeddingProvider, collectionName);
-
-            var connected = qdrantService.CheckConnectionAsync().GetAwaiter().GetResult();
-            if (!connected)
+            var settings = CommandHelper.LoadSettings();
+            if (!settings.GetBool("vector_search.enabled", true))
             {
-                Console.WriteLine($"[ERROR] Qdrant に接続できません ({host}:{port})");
-                Console.WriteLine("        docker compose up -d でQdrantを起動してください");
+                Console.WriteLine("[INFO] ベクトル検索が無効化されています");
                 return;
             }
 
-            // コレクション作成
-            qdrantService.EnsureCollectionAsync().GetAwaiter().GetResult();
+            var dimensions = settings.GetInt("embedding.dimensions", 384);
+            var embeddingProvider = new MockEmbeddingProvider(dimensions);
+            var dbPath = CommandHelper.GetDatabasePath();
+
+            var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+            optionsBuilder.UseSqlite($"Data Source={dbPath}");
+            using var context = new DesignAidDbContext(optionsBuilder.Options);
+
+            // マイグレーションを適用
+            context.Database.Migrate();
+
+            var dataDir = CommandHelper.GetDataDirectory();
+            var hnswIndexPath = Path.Combine(dataDir,
+                settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
+            using var vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);
 
             // パーツ情報を収集してベクトル化
             var points = new List<DesignKnowledgePoint>();
@@ -273,7 +289,6 @@ public class SyncCommand : Command
                 var partJson = partJsonReader.Read(partDir);
                 if (partJson == null) continue;
 
-                // コンテンツを構築
                 var contentParts = new List<string>
                 {
                     partJson.Name,
@@ -304,8 +319,9 @@ public class SyncCommand : Command
 
             if (points.Count > 0)
             {
-                qdrantService.UpsertPartsAsync(points).GetAwaiter().GetResult();
-                Console.WriteLine($"[SUCCESS] {points.Count} 件のパーツを Qdrant に同期しました");
+                vectorService.UpsertPartsAsync(points).GetAwaiter().GetResult();
+                vectorService.RebuildIndexAsync().GetAwaiter().GetResult();
+                Console.WriteLine($"[SUCCESS] {points.Count} 件のパーツをベクトルインデックスに同期しました");
             }
             else
             {
@@ -314,7 +330,7 @@ public class SyncCommand : Command
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] Qdrant 同期中にエラーが発生しました: {ex.Message}");
+            Console.WriteLine($"[ERROR] ベクトルインデックス同期中にエラーが発生しました: {ex.Message}");
         }
     }
 

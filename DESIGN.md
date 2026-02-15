@@ -34,8 +34,7 @@ AWS CDK の思想を機械設計に適用し、**手配境界**を抽象化の�
 | CLI フレームワーク | System.CommandLine | 2.x | サブコマンド構造 |
 | ORM | Entity Framework Core | 10.x | SQLite 連携 |
 | ローカル DB | SQLite | | EF Core 経由 |
-| Vector DB | Qdrant | 1.x | Docker で起動 |
-| Qdrant Client | Qdrant.Client | | NuGet パッケージ |
+| ベクトル検索 | HNSW (curiosity-ai) | 26.x | インプロセス ANN 検索。NuGet `HNSW` |
 | テスト | xUnit | | |
 | フォーマッター | dotnet format | | |
 | 将来GUI | Avalonia UI | 11.x | 将来対応 |
@@ -67,14 +66,18 @@ AWS CDK の思想を機械設計に適用し、**手配境界**を抽象化の�
 │                            │                                      │
 │  ┌─────────────────────────▼───────────────────────────────────┐ │
 │  │                   Infrastructure Layer                       │ │
-│  │  ┌─────────────────┐            ┌─────────────────────────┐ │ │
-│  │  │    SQLite       │            │        Qdrant           │ │ │
-│  │  │  (design_aid.db)│            │   (Vector Search)       │ │ │
-│  │  │                 │            │                         │ │ │
-│  │  │ - Parts         │            │ - design_knowledge      │ │ │
-│  │  │ - Handover      │            │   (仕様・パラメータ)      │ │ │
-│  │  │ - Standards     │            │                         │ │ │
-│  │  └─────────────────┘            └─────────────────────────┘ │ │
+│  │  ┌───────────────────────────────────────────────────┐      │ │
+│  │  │    SQLite (design_aid.db)                          │      │ │
+│  │  │                                                    │      │ │
+│  │  │ - Parts / Handover / Standards (リレーショナル)      │      │ │
+│  │  │ - VectorIndex (ベクトル BLOB + メタデータ)           │      │ │
+│  │  └───────────────────────────────────────────────────┘      │ │
+│  │                                                              │ │
+│  │  ┌───────────────────────────────────────────────────┐      │ │
+│  │  │    HNSW (インメモリ ANN インデックス)                │      │ │
+│  │  │    - sync 時に構築、ファイルにシリアライズ            │      │ │
+│  │  │    - search 時にデシリアライズして利用               │      │ │
+│  │  └───────────────────────────────────────────────────┘      │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                                                                   │
 │  ┌─────────────────────────────────────────────────────────────┐ │
@@ -160,9 +163,8 @@ design-aid/
 │       │   │   │   ├── PartConfiguration.cs
 │       │   │   │   └── HandoverConfiguration.cs
 │       │   │   └── Migrations/            # マイグレーション
-│       │   ├── Qdrant/
-│       │   │   ├── QdrantService.cs       # Qdrant クライアント
-│       │   │   └── EmbeddingService.cs    # ベクトル化サービス
+│       │   ├── VectorSearch/
+│       │   │   └── VectorSearchService.cs # ベクトル検索サービス（SQLite+HNSW）
 │       │   └── FileSystem/
 │       │       ├── AssetJsonReader.cs     # asset.json 読み書き
 │       │       ├── PartJsonReader.cs      # part.json 読み書き
@@ -184,21 +186,17 @@ design-aid/
 │       │   ├── ValidationServiceTests.cs
 │       │   └── SyncServiceTests.cs
 │       ├── Integration/
-│       │   ├── QdrantIntegrationTests.cs
+│       │   ├── VectorSearchIntegrationTests.cs
 │       │   └── SqliteIntegrationTests.cs
 │       └── DesignAid.Tests.csproj
 ├── data/                                  # 開発用データディレクトリ
-│   ├── config.json                        # 開発用設定
-│   ├── design_aid.db                      # 開発用DB（gitignore）
+│   ├── design_aid.db                      # 開発用DB（設定は Settings テーブルに格納、gitignore）
 │   ├── assets/                            # 装置
 │   │   └── sample-asset/
 │   │       └── asset.json
 │   └── components/                        # 部品
 │       └── SP-2026-PLATE-01/
 │           └── part.json
-├── docker-compose.yml                     # Qdrant 起動用
-├── appsettings.json                       # 設定ファイル
-├── appsettings.Development.json           # 開発用設定（DA_DATA_DIR=./data）
 ├── DesignAid.sln
 ├── CLAUDE.md
 └── DESIGN.md
@@ -236,8 +234,8 @@ dotnet add src/DesignAid package System.CommandLine
 dotnet add src/DesignAid package Microsoft.EntityFrameworkCore.Sqlite
 dotnet add src/DesignAid package Microsoft.EntityFrameworkCore.Design
 
-# Qdrant クライアント
-dotnet add src/DesignAid package Qdrant.Client
+# HNSW ベクトル検索（インプロセス ANN）
+dotnet add src/DesignAid package HNSW
 
 # JSON シリアライズ
 dotnet add src/DesignAid package System.Text.Json
@@ -267,9 +265,6 @@ set DA_DATA_DIR=./data
 
 # Linux/macOS
 export DA_DATA_DIR="./data"
-
-# Qdrant 起動
-docker compose up -d
 
 # DB マイグレーション（初回）
 dotnet ef database update --project src/DesignAid
@@ -327,8 +322,8 @@ Design Aid はシステムディレクトリに設定・DB・装置・部品を�
 ```text
 # 本番環境
 ~/.design-aid/                      # Windows: %APPDATA%\design-aid
-├── config.json                     # グローバル設定
-├── design_aid.db                   # 統合DB
+├── design_aid.db                   # 統合DB（リレーショナル + ベクトル BLOB + Settings テーブル）
+├── hnsw_index.bin                  # HNSW グラフキャッシュ（再構築可能）
 ├── assets/                         # 装置（トップレベル）
 │   └── ...
 └── components/                     # 部品（共有リソース）
@@ -339,8 +334,8 @@ design-aid/
 ├── src/
 ├── tests/
 ├── data/                           # 開発用データ
-│   ├── config.json
-│   ├── design_aid.db
+│   ├── design_aid.db              # 設定は Settings テーブルに格納
+│   ├── hnsw_index.bin              # HNSW グラフキャッシュ（gitignore）
 │   ├── assets/                     # 装置
 │   │   └── lifting-unit/
 │   │       └── asset.json
@@ -379,8 +374,7 @@ design-aid/
 
 ```text
 data/
-├── config.json                     # 設定ファイル
-├── design_aid.db                   # SQLite DB
+├── design_aid.db                   # SQLite DB（Settings テーブルに設定を格納）
 ├── assets/                         # 装置（トップレベル）
 │   ├── lifting-unit/
 │   │   └── asset.json              # 装置定義
@@ -565,6 +559,22 @@ CREATE TABLE Standards (
     Description TEXT,
     ValidationRuleJson TEXT       -- JSON 形式のバリデーションルール
 );
+
+-- ベクトルインデックス（類似検索用）
+CREATE TABLE VectorIndex (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    PartId TEXT NOT NULL,            -- Parts.Id への参照
+    PartNumber TEXT NOT NULL,        -- 検索結果表示用（キャッシュ）
+    Content TEXT NOT NULL,           -- ベクトル化対象テキスト
+    Embedding BLOB NOT NULL,         -- float[] をバイト列で保存
+    Dimensions INTEGER NOT NULL,     -- ベクトル次元数
+    HnswInternalId INTEGER,          -- HNSW グラフ内の内部ID（sync 時に付与）
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    FOREIGN KEY (PartId) REFERENCES Parts(Id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_VectorIndex_PartId ON VectorIndex(PartId);
 ```
 
 ### 手配ステータス
@@ -642,46 +652,126 @@ public partial class RenamePartIdToId : Migration
 }
 ```
 
-### Qdrant データの再同期
+### ベクトルインデックスの再構築
 
-スキーマ変更後、Qdrant のベクトルデータも更新が必要な場合:
+スキーマ変更後、ベクトルデータの更新が必要な場合:
 
 ```bash
-# ベクトルデータを再生成
+# ベクトルデータを再生成（全パーツの埋め込みを再計算し HNSW を再構築）
 daid sync --include-vectors --force
-
-# コレクションを再作成（破壊的）
-daid sync --recreate-collection
 ```
 
 ### バックアップ戦略
 
 ```bash
 # SQLite バックアップ（マイグレーション前に推奨）
+# DB にベクトルも含まれるため、これだけで全データをバックアップ可能
 cp design_aid.db design_aid.db.backup.$(date +%Y%m%d_%H%M%S)
 
-# Qdrant スナップショット（Docker ボリューム）
-docker exec da-qdrant /qdrant/qdrant snapshot create design_knowledge
+# HNSW キャッシュは再構築可能なためバックアップ不要
 ```
 
-## Qdrant 設計
+## ベクトル検索設計
 
-### コレクション設計
+### アーキテクチャ概要
+
+Qdrant（外部ベクトル DB）に代わり、**SQLite + HNSW ライブラリ**によるインプロセスベクトル検索を採用。
+Docker 不要で単一実行ファイルとして配布可能。
 
 ```
-Collection: design_knowledge
-├── id: UUID
-├── vector: float[N]     # 埋め込みベクトル（次元数はプロバイダーに依存）
-└── payload:
-    ├── part_id: UUID            # パーツ内部ID
-    ├── part_number: string      # 型式
-    ├── asset_id: UUID           # 装置内部ID
-    ├── asset_name: string       # 装置名
-    ├── type: string (spec/memo/parameter)
-    ├── content: string (元テキスト)
-    ├── file_path: string
-    └── created_at: string
+┌─────────────────────────────────────────────────────────────┐
+│                    VectorSearchService                       │
+│                                                              │
+│  ┌──────────────────────┐    ┌────────────────────────────┐ │
+│  │ SQLite VectorIndex   │    │ HNSW SmallWorld<float[],f> │ │
+│  │                      │    │                            │ │
+│  │ - Embedding (BLOB)   │◄──►│ - ANN インデックス          │ │
+│  │ - PartId, Content    │    │ - Cosine 距離 (SIMD)       │ │
+│  │ - メタデータ          │    │ - シリアライズ/復元         │ │
+│  └──────────────────────┘    └────────────────────────────┘ │
+│                                                              │
+│  ┌──────────────────────┐                                    │
+│  │ IEmbeddingProvider   │  ← Mock / OpenAI / Ollama / Azure │
+│  └──────────────────────┘                                    │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### データフロー
+
+```
+【同期時: daid sync --include-vectors】
+  パーツ (Parts テーブル + part.json)
+    → コンテンツ構築 (名前, 型, メモ, メタデータ)
+    → IEmbeddingProvider で float[] 生成
+    → SQLite VectorIndex に INSERT (BLOB)
+    → HNSW インデックスを全件から構築
+    → hnsw_index.bin にシリアライズ (グラフキャッシュ)
+
+【検索時: daid search】
+  クエリテキスト
+    → IEmbeddingProvider で float[] 生成
+    → SQLite から全ベクトル読み込み
+    → hnsw_index.bin からグラフ復元 (存在すれば)
+    → HNSW KNNSearch で上位k件取得
+    → コサイン距離 → 類似度スコアに変換 (score = 1 - distance)
+    → 閾値フィルタ → 結果返却
+```
+
+### HNSW パラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|-----|------|
+| M | 16 | ゼロ層以上の最大近傍数 |
+| LevelLambda | 1/ln(16) | レベル分布パラメータ |
+| ConstructionPruning | 200 | 構築時の候補数 (efConstruction) |
+| EfSearch | 100 | 検索時の候補数 |
+| NeighbourHeuristic | SelectHeuristic | Algorithm 4 使用 |
+| 距離関数 | CosineDistance.SIMDForUnits | SIMD 加速コサイン距離 |
+
+### float[] ⇔ BLOB 変換
+
+```csharp
+// float[] → byte[]（SQLite 保存用）
+public static byte[] ToBlob(float[] vector)
+{
+    var bytes = new byte[vector.Length * sizeof(float)];
+    Buffer.BlockCopy(vector, 0, bytes, 0, bytes.Length);
+    return bytes;
+}
+
+// byte[] → float[]（SQLite 読み出し後の復元）
+public static float[] FromBlob(byte[] blob)
+{
+    var vector = new float[blob.Length / sizeof(float)];
+    Buffer.BlockCopy(blob, 0, vector, 0, blob.Length);
+    return vector;
+}
+```
+
+### HNSW インデックスの永続化
+
+HNSW ライブラリはグラフ構造のみをシリアライズする（ベクトルデータは含まない）。
+復元時にはベクトルデータを別途渡す必要がある。
+
+```
+保存対象:
+  hnsw_index.bin  → HNSW グラフ構造（MessagePack 形式）
+  VectorIndex テーブル → ベクトル BLOB + メタデータ（SQLite、ソースオブトゥルース）
+
+復元フロー:
+  1. SQLite VectorIndex から全ベクトルを読み込み → List<float[]>
+  2. hnsw_index.bin から SmallWorld.DeserializeGraph() でグラフ復元
+  3. 検索可能な状態に
+  ※ hnsw_index.bin が存在しない場合は SQLite のベクトルから再構築
+```
+
+### 削除の扱い
+
+HNSW ライブラリはベクトル削除をサポートしない。以下の方針で対処:
+
+- `daid part remove` → Parts テーブルから DELETE（CASCADE で VectorIndex も削除）
+- `daid sync --include-vectors` → VectorIndex を全クリアし全パーツから再構築
+- CLI ツールの特性上、sync が明示的な再構築ポイントであり問題なし
 
 ### ベクトル化対象
 
@@ -690,6 +780,16 @@ Collection: design_knowledge
 | 仕様テキスト | part.json の memo、metadata |
 | 計算書内容 | PDF/Excel から抽出したテキスト |
 | 図面注記 | DXF/DWG から抽出した注記 |
+
+### メモリ使用量の目安
+
+| パーツ数 | 次元 | ベクトル | グラフ | 合計 |
+|---------|------|---------|-------|------|
+| 1,000 | 768 | 3 MB | 0.3 MB | ~3 MB |
+| 10,000 | 768 | 30 MB | 2.5 MB | ~33 MB |
+| 10,000 | 1536 | 60 MB | 2.5 MB | ~63 MB |
+
+CLI ツールのため、`daid search` 実行時のみメモリにロードし、プロセス終了で解放。
 
 ## CLI コマンド仕様
 
@@ -956,7 +1056,7 @@ Summary: 1 Pass, 1 Fail
 
 ### daid sync
 
-ファイルシステムと SQLite/Qdrant を同期する。
+ファイルシステムと SQLite を同期する。`--include-vectors` でベクトルインデックスも再構築する。
 
 ```bash
 # 同期実行
@@ -965,7 +1065,7 @@ daid sync
 # ドライラン（変更確認のみ）
 daid sync --dry-run
 
-# Qdrant への同期も含む
+# ベクトルインデックスの再構築も含む
 daid sync --include-vectors
 ```
 
@@ -1083,7 +1183,7 @@ Design Aid Status
 
 System:
   Database: ~/.design-aid/design_aid.db
-  Qdrant: Connected (localhost:6333)
+  Vector Index: 40 vectors (768 dimensions)
 
 Assets: 3
   lifting-unit     (15 parts)
@@ -1098,7 +1198,7 @@ Parts: 40 total
 
 ### daid archive
 
-装置やパーツをアーカイブして容量を節約する。アーカイブされたデータは ZIP 圧縮され、Qdrant のベクトルは維持されるため検索は引き続き可能。
+装置やパーツをアーカイブして容量を節約する。アーカイブされたデータは ZIP 圧縮され、ベクトルインデックスは維持されるため検索は引き続き可能。
 
 ```bash
 # 装置をアーカイブ
@@ -1129,7 +1229,7 @@ Asset archived: old-unit
   Archive size: 3.8 MB
   Saved: 75.0%
 
-Note: Qdrant vectors are preserved for search.
+Note: Vector index entries are preserved for search.
 ```
 
 **出力例（一覧表示）:**
@@ -1291,57 +1391,50 @@ public interface IDesignStandard
 
 ## 設定項目
 
-### システムディレクトリ解決
+### 設定アーキテクチャ
 
-| 環境 | パス | 備考 |
-|------|------|------|
-| 本番 (Windows) | `%APPDATA%\design-aid\` | 例: `C:\Users\<user>\AppData\Roaming\design-aid\` |
-| 本番 (Linux/macOS) | `~/.design-aid/` | |
-| 開発 | `<repo>/data/` | 環境変数 `DA_DATA_DIR` で上書き可能 |
+全ての設定は SQLite の **Settings テーブル**に一元管理される。
+ブートストラップ（DB の場所特定）のみ環境変数を使用する。
 
-### appsettings.json
+- **ブートストラップ**: `DA_DATA_DIR` 環境変数 or 慣例（`./data`、リポジトリルート検出）
+- **DB ファイル名**: `design_aid.db` 固定
+- **設定の読み書き**: `daid config show` / `daid config set <key> <value>`
+- **旧 config.json**: `daid setup` 時に自動的に Settings テーブルへ移行
 
-```json
-{
-  "DesignAid": {
-    "SystemDirectory": null,
-    "Database": {
-      "Path": "design_aid.db"
-    },
-    "Qdrant": {
-      "Host": "localhost",
-      "Port": 6333,
-      "CollectionName": "design_knowledge",
-      "Enabled": true
-    },
-    "Embedding": {
-      "Provider": "OpenAI",
-      "Providers": {
-        "OpenAI": {
-          "Model": "text-embedding-3-small",
-          "Dimensions": 1536
-        },
-        "Ollama": {
-          "Host": "http://localhost:11434",
-          "Model": "nomic-embed-text",
-          "Dimensions": 768
-        },
-        "Azure": {
-          "Endpoint": "${DA_AZURE_ENDPOINT}",
-          "DeploymentName": "${DA_AZURE_DEPLOYMENT}",
-          "Dimensions": 1536
-        }
-      }
-    },
-    "Hashing": {
-      "Algorithm": "SHA256"
-    }
-  }
-}
+### Settings テーブル
+
+```sql
+CREATE TABLE Settings (
+    Key TEXT PRIMARY KEY,    -- dot-notation キー
+    Value TEXT NOT NULL,     -- 設定値（文字列）
+    UpdatedAt TEXT NOT NULL  -- 最終更新日時（ISO 8601）
+);
 ```
 
-**注意**: `SystemDirectory` が `null` の場合、OS に応じたデフォルトパスを使用。
-開発時は環境変数 `DA_DATA_DIR` で `./data` を指定することを推奨。
+### デフォルト設定値
+
+| Key | Default | 説明 |
+|-----|---------|------|
+| `database.path` | `design_aid.db` | DB ファイル名（相対パス） |
+| `vector_search.enabled` | `true` | ベクトル検索有効/無効 |
+| `vector_search.hnsw_index_path` | `hnsw_index.bin` | HNSW インデックスファイルパス |
+| `embedding.provider` | `Mock` | 埋め込みプロバイダー名 |
+| `embedding.dimensions` | `384` | ベクトル次元数 |
+| `embedding.model` | (null) | モデル名 |
+| `embedding.api_key` | (null) | API キー |
+| `embedding.endpoint` | (null) | エンドポイント URL |
+| `hashing.algorithm` | `SHA256` | ハッシュアルゴリズム |
+| `backup.s3_bucket` | (空文字) | S3 バケット名 |
+| `backup.s3_prefix` | `design-aid-backup/` | S3 プレフィックス |
+| `backup.aws_profile` | `default` | AWS CLI プロファイル |
+
+### データディレクトリ解決
+
+| 優先度 | 方法 | 備考 |
+|--------|------|------|
+| 1 | 環境変数 `DA_DATA_DIR` | 明示的に指定 |
+| 2 | リポジトリルートの `data/` | `DesignAid.sln` を検出 |
+| 3 | カレントディレクトリの `data/` | フォールバック |
 
 ### Embedding プロバイダー設計
 
@@ -1366,80 +1459,10 @@ public interface IEmbeddingProvider
     Task<IReadOnlyList<float[]>> GenerateEmbeddingsAsync(
         IEnumerable<string> texts, CancellationToken ct = default);
 }
-
-// DI 登録例
-services.AddKeyedScoped<IEmbeddingProvider, OpenAiEmbeddingProvider>("OpenAI");
-services.AddKeyedScoped<IEmbeddingProvider, OllamaEmbeddingProvider>("Ollama");
-services.AddKeyedScoped<IEmbeddingProvider, AzureEmbeddingProvider>("Azure");
-
-// 使用時はファクトリーパターンで切り替え
-public class EmbeddingProviderFactory
-{
-    public IEmbeddingProvider Create(string providerName)
-    {
-        // 設定に基づいてプロバイダーを返す
-    }
-}
 ```
 
-### 環境変数
-
-| 変数名 | 必須 | デフォルト | 説明 |
-|--------|------|-----------|------|
-| `DA_DATA_DIR` | - | OS依存 | システムディレクトリ（DB、設定の配置先） |
-| `DA_EMBEDDING_PROVIDER` | - | `OpenAI` | 使用する埋め込みプロバイダー |
-| `DA_EMBEDDING_API_KEY` | △ | - | 埋め込み API キー（プロバイダーによる） |
-| `DA_DB_PATH` | - | `./design_aid.db` | SQLite DBパス |
-| `DA_QDRANT_HOST` | - | `localhost` | Qdrant ホスト |
-| `DA_QDRANT_PORT` | - | `6333` | Qdrant ポート |
-| `DA_QDRANT_ENABLED` | - | `true` | Qdrant 機能の有効/無効 |
-| `DA_AZURE_ENDPOINT` | △ | - | Azure OpenAI エンドポイント |
-| `DA_AZURE_DEPLOYMENT` | △ | - | Azure OpenAI デプロイメント名 |
-
-※ △ = プロバイダー選択時に必須
-
-### シークレット管理
-
-開発段階では環境変数で管理する。
-
-```bash
-# Windows (PowerShell)
-$env:DA_EMBEDDING_API_KEY = "sk-..."
-
-# Windows (cmd)
-set DA_EMBEDDING_API_KEY=sk-...
-
-# Linux/macOS
-export DA_EMBEDDING_API_KEY="sk-..."
-```
-
-**注意事項:**
-- API キーは appsettings.json に直接記載しない
-- `.env` ファイルを使用する場合は `.gitignore` に追加すること
-- 本番環境ではシークレット管理サービス（Azure Key Vault 等）への移行を推奨
-
-## Docker Compose 設定
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: da-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_storage:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-
-volumes:
-  qdrant_storage:
-```
+プロバイダーの切り替えは `daid config set embedding.provider <name>` で行う。
+API キーも `daid config set embedding.api_key <key>` で DB に保存される。
 
 ## テスト戦略
 
@@ -1448,7 +1471,7 @@ volumes:
 | 分類 | 対象 | フレームワーク | 優先度 |
 |------|------|--------------|--------|
 | ユニットテスト | ドメインモデル、サービス | xUnit | 最優先 |
-| 統合テスト | SQLite 連携、Qdrant 連携 | xUnit + TestContainers | 高 |
+| 統合テスト | SQLite 連携、ベクトル検索連携 | xUnit | 高 |
 | CLI 統合テスト | CLI コマンド全体 | スクリプト (PowerShell/bash) | 高 |
 
 ### テスト関連ドキュメント・スクリプト
@@ -1560,8 +1583,8 @@ public class HashServiceTests
 4. `daid deploy` コマンド
 
 #### フェーズ4: 知見検索
-1. Qdrant 連携
-2. ベクトル化サービス
+1. VectorSearchService 実装（SQLite + HNSW）
+2. 埋め込みプロバイダー連携
 3. `daid search` コマンド
 4. 類似設計の推薦
 
@@ -1587,7 +1610,7 @@ public class HashServiceTests
 | 1 | 一般エラー | 実行時エラー、予期しないエラー |
 | 2 | 引数エラー | 不正なコマンドライン引数 |
 | 3 | 設定エラー | 設定ファイル不正、環境変数未設定 |
-| 4 | 接続エラー | Qdrant/外部サービスへの接続失敗 |
+| 4 | 接続エラー | 外部サービスへの接続失敗 |
 | 5 | 整合性エラー | ハッシュ不整合、データ破損検知 |
 
 ### 例外処理戦略
@@ -1710,7 +1733,7 @@ public record ValidationDetail(string Field, string Message, ValidationSeverity 
 
 | 状況 | 動作 |
 |------|------|
-| Qdrant 未接続 | 警告を出して検索機能を無効化、他の機能は継続 |
+| ベクトルインデックス未構築 | 警告を出してキーワード検索にフォールバック、他の機能は継続 |
 | part.json 不正 | 該当パーツをスキップし、他のパーツは処理継続 |
 | ハッシュ不整合 | 警告として報告、処理は継続（`--strict` で中断） |
 
@@ -1736,7 +1759,7 @@ DesignAid.Application.Services      # サービス
 DesignAid.Application.DTOs          # DTO
 DesignAid.Infrastructure            # インフラ層
 DesignAid.Infrastructure.Persistence # DB 永続化
-DesignAid.Infrastructure.Qdrant     # Qdrant 連携
+DesignAid.Infrastructure.VectorSearch # ベクトル検索（SQLite+HNSW）
 DesignAid.Infrastructure.FileSystem # ファイルシステム
 DesignAid.Configuration             # 設定
 ```
@@ -1746,6 +1769,7 @@ DesignAid.Configuration             # 設定
 | 日付 | バージョン | 変更内容 | 担当 |
 |------|-----------|---------|------|
 | | 0.1.0 | 初版作成 | - |
+| 2026-02-15 | - | ベクトル検索を Qdrant から SQLite+HNSW に移行（Docker 依存解消） | - |
 
 ## 備考
 
@@ -1794,7 +1818,7 @@ Microsoft、OpenAI、Google DeepMind 等も採用しており、事実上の業�
 | `ListParts` | `daid part list` | パーツ一覧を取得 |
 | `GetPartDetails` | part.json 読み取り | パーツの詳細情報を返却 |
 | `CheckIntegrity` | `daid check` | ハッシュ整合性をチェック |
-| `SearchDesigns` | `daid search` | 類似設計をベクトル検索（Qdrant） |
+| `SearchDesigns` | `daid search` | 類似設計をベクトル検索 |
 | `VerifyStandards` | `daid verify` | 設計基準バリデーション |
 | `GetAssetParts` | `daid asset list --verbose` | 装置に紐づくパーツ情報を取得 |
 | `GetStatus` | `daid status` | システム状態を取得 |
@@ -1853,7 +1877,7 @@ daid mcp
 #### 実装時の注意事項
 
 1. **既存サービスの再利用**: `PartService`, `HashService`, `SearchService` 等を DI で注入
-2. **Qdrant グレースフルデグラデーション**: Qdrant 未接続時は `SearchDesigns` ツールを無効化し、他ツールは継続
+2. **ベクトル検索グレースフルデグラデーション**: ベクトルインデックス未構築時は `SearchDesigns` ツールを無効化し、他ツールは継続
 3. **ログ出力**: STDIO トランスポート使用時、ログは stderr に出力（stdout は MCP 通信に使用）
 4. **将来の HTTP 対応**: チーム共有機能実装時に Streamable HTTP トランスポートを追加検討
 

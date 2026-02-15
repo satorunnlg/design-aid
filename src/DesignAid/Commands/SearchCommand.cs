@@ -1,10 +1,11 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Text.Json;
-using DesignAid.Application.Services;
 using DesignAid.Infrastructure.Embedding;
 using DesignAid.Infrastructure.FileSystem;
-using DesignAid.Infrastructure.Qdrant;
+using DesignAid.Infrastructure.Persistence;
+using DesignAid.Infrastructure.VectorSearch;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands;
 
@@ -19,41 +20,52 @@ public class SearchCommand : Command
         this.Add(new Option<double>("--threshold", () => 0.7, "類似度閾値 (0.0-1.0)"));
         this.Add(new Option<int>("--top", () => 10, "上位N件を表示"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
-        this.Add(new Option<bool>("--local", "ローカル検索のみ使用（Qdrant を使用しない）"));
+        this.Add(new Option<bool>("--local", "ローカル検索のみ使用（ベクトル検索を使用しない）"));
 
         this.Handler = CommandHandler.Create<string, double, int, bool, bool>(Execute);
     }
 
     private static async Task Execute(string query, double threshold, int top, bool json, bool local)
     {
-        // Qdrant 接続を試みる
-        QdrantService? qdrantService = null;
-        bool useQdrant = false;
+        // ベクトルインデックスの利用を試みる
+        VectorSearchService? vectorService = null;
+        bool useVector = false;
 
         if (!local)
         {
             try
             {
-                var embeddingProvider = new MockEmbeddingProvider();
-                var (host, port, collectionName) = CommandHelper.GetQdrantConfig();
-                qdrantService = new QdrantService(
-                    host: host,
-                    port: port,
-                    embeddingProvider: embeddingProvider,
-                    collectionName: collectionName);
+                var settings = CommandHelper.LoadSettings();
+                if (settings.GetBool("vector_search.enabled", true))
+                {
+                    var dimensions = settings.GetInt("embedding.dimensions", 384);
+                    var embeddingProvider = new MockEmbeddingProvider(dimensions);
+                    var dbPath = CommandHelper.GetDatabasePath();
 
-                useQdrant = await qdrantService.CheckConnectionAsync();
+                    if (File.Exists(dbPath))
+                    {
+                        var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+                        optionsBuilder.UseSqlite($"Data Source={dbPath}");
+                        var context = new DesignAidDbContext(optionsBuilder.Options);
+
+                        var dataDir = CommandHelper.GetDataDirectory();
+                        var hnswIndexPath = Path.Combine(dataDir,
+                            settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
+                        vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);
+                        useVector = await vectorService.IsAvailableAsync();
+                    }
+                }
             }
             catch
             {
-                // Qdrant 接続失敗時はローカル検索にフォールバック
+                // ベクトル検索の初期化失敗時はローカル検索にフォールバック
             }
         }
 
-        if (useQdrant && qdrantService != null)
+        if (useVector && vectorService != null)
         {
-            await ExecuteVectorSearch(query, threshold, top, json, qdrantService);
-            qdrantService.Dispose();
+            await ExecuteVectorSearch(query, threshold, top, json, vectorService);
+            vectorService.Dispose();
         }
         else
         {
@@ -66,7 +78,7 @@ public class SearchCommand : Command
         double threshold,
         int top,
         bool json,
-        QdrantService qdrantService)
+        VectorSearchService vectorService)
     {
         if (!json)
         {
@@ -76,7 +88,7 @@ public class SearchCommand : Command
             Console.WriteLine();
         }
 
-        var results = await qdrantService.SearchAsync(query, threshold, top);
+        var results = await vectorService.SearchAsync(query, threshold, top);
 
         if (json)
         {
@@ -101,7 +113,7 @@ public class SearchCommand : Command
             {
                 Console.WriteLine("Results: (no matches found)");
                 Console.WriteLine();
-                Console.WriteLine("ヒント: `da sync --include-vectors` でパーツをベクトルDBに同期してください");
+                Console.WriteLine("ヒント: `daid sync --include-vectors` でパーツをベクトルインデックスに同期してください");
                 return;
             }
 
@@ -132,7 +144,7 @@ public class SearchCommand : Command
 
     private static void ExecuteLocalSearch(string query, double threshold, int top, bool json)
     {
-        // Qdrant 連携が利用できない場合は、ローカル検索を行う
+        // ベクトル検索が利用できない場合は、ローカルキーワード検索を行う
         var componentsDir = CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))
@@ -160,8 +172,8 @@ public class SearchCommand : Command
             Console.WriteLine();
             Console.WriteLine($"Query: \"{query}\"");
             Console.WriteLine();
-            Console.WriteLine("[INFO] Qdrant 未接続のためキーワードベースの検索を使用しています");
-            Console.WriteLine("       ベクトル検索を有効にするには Qdrant を起動してください");
+            Console.WriteLine("[INFO] ベクトルインデックス未構築のためキーワードベースの検索を使用しています");
+            Console.WriteLine("       ベクトル検索を有効にするには `daid sync --include-vectors` を実行してください");
             Console.WriteLine();
         }
 
