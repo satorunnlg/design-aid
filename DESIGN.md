@@ -321,9 +321,12 @@ dotnet format
 # Windows x64
 dotnet publish -c Release -r win-x64 --self-contained
 
-# 単一実行ファイル
-dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+# 単一実行ファイル（トリミング付き）
+dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true
 ```
+
+> **注意**: トリミング付きパブリッシュでは `TrimMode=partial` と EF Core 向け `TrimmerRootAssembly` が
+> csproj で設定済み。これにより EF Core のリフレクション型が保持される。
 
 ## データ構造
 
