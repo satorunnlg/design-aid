@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2-alpha] - 2026-02-16
+
+### Fixed
+
+- **トリミング付きパブリッシュで EF Core のリフレクションエラーが発生するバグを修正**
+  - `PublishTrimmed=true` で単一ファイルパブリッシュした場合、`EntryCurrentValueComparer<Guid>` のコンストラクタがトリミングされ `Database.Migrate()` が失敗していた
+  - `TrimMode=partial` と `TrimmerRootAssembly` を csproj に追加し、EF Core アセンブリをトリミング対象外に設定
+
+### Changed
+
+- `DESIGN.md` の発行セクションにトリミング付きパブリッシュの注意事項を追記
+
 ## [0.3.1-alpha] - 2026-02-16
 
 ### Fixed
