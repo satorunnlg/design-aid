@@ -19,6 +19,7 @@ public class ArchiveListCommand : Command
 
     private static async Task ExecuteAsync(bool json)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var indexPath = CommandHelper.GetArchiveIndexPath();
         var archiveIndexReader = new ArchiveIndexReader();
         var index = await archiveIndexReader.LoadAsync(indexPath);

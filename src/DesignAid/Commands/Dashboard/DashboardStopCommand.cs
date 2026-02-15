@@ -17,6 +17,7 @@ public class DashboardStopCommand : Command
 
     private static async Task<int> StopAsync()
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return 3;
         var pidPath = CommandHelper.GetDashboardPidPath();
 
         if (!File.Exists(pidPath))

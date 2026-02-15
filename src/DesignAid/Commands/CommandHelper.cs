@@ -12,49 +12,87 @@ namespace DesignAid.Commands;
 public static class CommandHelper
 {
     /// <summary>
+    /// DB ファイル名（固定）。
+    /// </summary>
+    public const string DatabaseFileName = "design_aid.db";
+
+    /// <summary>
+    /// プロジェクトルートから上方向に探索する最大階層数。
+    /// </summary>
+    private const int MaxSearchDepth = 2;
+
+    /// <summary>
     /// 装置ディレクトリのパスを取得する。
+    /// 事前に EnsureDataDirectory() で検証済みであること。
     /// </summary>
     public static string GetAssetsDirectory()
     {
-        return Path.Combine(GetDataDirectory(), "assets");
+        return Path.Combine(GetDataDirectory()!, "assets");
     }
 
     /// <summary>
     /// コンポーネントディレクトリのパスを取得する。
+    /// 事前に EnsureDataDirectory() で検証済みであること。
     /// </summary>
     public static string GetComponentsDirectory()
     {
-        return Path.Combine(GetDataDirectory(), "components");
+        return Path.Combine(GetDataDirectory()!, "components");
     }
 
     /// <summary>
-    /// データディレクトリのパスを取得する。
-    /// ブートストラップ: DA_DATA_DIR 環境変数 → リポジトリルートの data/ → カレントの data/
+    /// データディレクトリ（プロジェクトルート）のパスを取得する。
+    /// 解決順序:
+    ///   1. 環境変数 DA_DATA_DIR（後方互換）
+    ///   2. カレントディレクトリから上方向に最大2階層まで design_aid.db を探索
+    /// 見つからない場合は null を返す。
     /// </summary>
-    public static string GetDataDirectory()
+    public static string? GetDataDirectory()
     {
         var dataDir = Environment.GetEnvironmentVariable("DA_DATA_DIR");
         if (!string.IsNullOrEmpty(dataDir))
             return dataDir;
 
-        var currentDir = Directory.GetCurrentDirectory();
-        var dir = currentDir;
-        while (dir != null)
-        {
-            if (IsRepositoryRoot(dir))
-                return Path.Combine(dir, "data");
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        return Path.Combine(currentDir, "data");
+        return FindProjectRoot();
     }
 
     /// <summary>
-    /// リポジトリルートかどうかを判定する。
+    /// データディレクトリを取得し、見つからない場合はエラーメッセージを表示して exit code を設定する。
+    /// コマンドから呼び出す場合はこのメソッドを使用する。
     /// </summary>
-    public static bool IsRepositoryRoot(string dir)
+    /// <returns>データディレクトリのパス。見つからない場合は null（呼び出し元は return すること）。</returns>
+    public static string? EnsureDataDirectory()
     {
-        return File.Exists(Path.Combine(dir, "DesignAid.sln"))
-            || File.Exists(Path.Combine(dir, "DesignAid.slnx"));
+        var dataDir = GetDataDirectory();
+        if (dataDir == null)
+        {
+            Console.Error.WriteLine("[ERROR] プロジェクトが見つかりません。");
+            Console.Error.WriteLine("  カレントディレクトリから上方向に design_aid.db を探しましたが見つかりませんでした。");
+            Console.Error.WriteLine("  対処: プロジェクトディレクトリ内で実行するか、`daid setup` で初期化してください。");
+            Environment.ExitCode = 3;
+            return null;
+        }
+        return dataDir;
+    }
+
+    /// <summary>
+    /// カレントディレクトリから上方向に最大2階層まで design_aid.db を探索し、
+    /// プロジェクトルート（design_aid.db が存在するディレクトリ）を返す。
+    /// 見つからない場合は null。
+    /// </summary>
+    public static string? FindProjectRoot()
+    {
+        var currentDir = Directory.GetCurrentDirectory();
+        var dir = currentDir;
+
+        for (var depth = 0; depth <= MaxSearchDepth && dir != null; depth++)
+        {
+            if (File.Exists(Path.Combine(dir, DatabaseFileName)))
+                return dir;
+
+            dir = Directory.GetParent(dir)?.FullName;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -63,7 +101,7 @@ public static class CommandHelper
     /// </summary>
     public static string GetDatabasePath()
     {
-        return Path.Combine(GetDataDirectory(), "design_aid.db");
+        return Path.Combine(GetDataDirectory()!, DatabaseFileName);
     }
 
     /// <summary>
@@ -71,7 +109,7 @@ public static class CommandHelper
     /// </summary>
     public static string GetArchiveDirectory()
     {
-        return Path.Combine(GetDataDirectory(), "archive");
+        return Path.Combine(GetDataDirectory()!, "archive");
     }
 
     /// <summary>
@@ -79,7 +117,7 @@ public static class CommandHelper
     /// </summary>
     public static string GetArchiveIndexPath()
     {
-        return Path.Combine(GetDataDirectory(), "archive_index.json");
+        return Path.Combine(GetDataDirectory()!, "archive_index.json");
     }
 
     /// <summary>
@@ -106,7 +144,7 @@ public static class CommandHelper
     /// </summary>
     public static ServiceProvider BuildServiceProvider()
     {
-        var dataDir = GetDataDirectory();
+        var dataDir = GetDataDirectory()!;
         var dbPath = GetDatabasePath();
 
         var services = new ServiceCollection();
@@ -119,6 +157,6 @@ public static class CommandHelper
     /// </summary>
     public static string GetDashboardPidPath()
     {
-        return Path.Combine(GetDataDirectory(), ".dashboard.pid");
+        return Path.Combine(GetDataDirectory()!, ".dashboard.pid");
     }
 }

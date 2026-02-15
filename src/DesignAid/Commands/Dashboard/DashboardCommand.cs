@@ -32,7 +32,8 @@ public class DashboardCommand : Command
 
     private static async Task<int> StartAsync(int port, bool noBrowser)
     {
-        var dataDir = CommandHelper.GetDataDirectory();
+        var dataDir = CommandHelper.EnsureDataDirectory();
+        if (dataDir == null) return 3;
         var dbPath = CommandHelper.GetDatabasePath();
         var pidPath = CommandHelper.GetDashboardPidPath();
 

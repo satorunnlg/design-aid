@@ -27,6 +27,8 @@ public class SearchCommand : Command
 
     private static async Task Execute(string query, double threshold, int top, bool json, bool local)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
+
         // ベクトルインデックスの利用を試みる
         VectorSearchService? vectorService = null;
         bool useVector = false;
@@ -48,7 +50,7 @@ public class SearchCommand : Command
                         optionsBuilder.UseSqlite($"Data Source={dbPath}");
                         var context = new DesignAidDbContext(optionsBuilder.Options);
 
-                        var dataDir = CommandHelper.GetDataDirectory();
+                        var dataDir = CommandHelper.GetDataDirectory()!;
                         var hnswIndexPath = Path.Combine(dataDir,
                             settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
                         vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);

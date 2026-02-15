@@ -18,6 +18,7 @@ public class AssetRemoveCommand : Command
 
     private static void Execute(string name, bool force)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetPath = Path.Combine(assetsDir, name);
 

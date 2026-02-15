@@ -22,6 +22,7 @@ public class AssetAddCommand : Command
 
     private static async Task ExecuteAsync(string name, string? displayName, string? description, bool noGit)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetPath = Path.Combine(assetsDir, name);
 

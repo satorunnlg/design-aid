@@ -41,12 +41,13 @@ public class ConfigShowCommand : Command
     {
         try
         {
+            if (CommandHelper.EnsureDataDirectory() == null) return 3;
             var dbPath = CommandHelper.GetDatabasePath();
 
             if (!File.Exists(dbPath))
             {
                 Console.Error.WriteLine($"データベースが見つかりません: {dbPath}");
-                Console.Error.WriteLine("da setup を実行してデータディレクトリを初期化してください。");
+                Console.Error.WriteLine("daid setup を実行してプロジェクトを初期化してください。");
                 return 1;
             }
 
@@ -136,12 +137,13 @@ public class ConfigSetCommand : Command
     {
         try
         {
+            if (CommandHelper.EnsureDataDirectory() == null) return 3;
             var dbPath = CommandHelper.GetDatabasePath();
 
             if (!File.Exists(dbPath))
             {
                 Console.Error.WriteLine($"データベースが見つかりません: {dbPath}");
-                Console.Error.WriteLine("da setup を実行してデータディレクトリを初期化してください。");
+                Console.Error.WriteLine("daid setup を実行してプロジェクトを初期化してください。");
                 return 1;
             }
 
@@ -189,11 +191,12 @@ public class ConfigPathCommand : Command
 
     private int Execute()
     {
-        var dataDir = CommandHelper.GetDataDirectory();
+        var dataDir = CommandHelper.EnsureDataDirectory();
+        if (dataDir == null) return 3;
         var dbPath = CommandHelper.GetDatabasePath();
 
         Console.WriteLine("パス情報:");
-        Console.WriteLine($"  データディレクトリ: {dataDir}");
+        Console.WriteLine($"  プロジェクトディレクトリ: {dataDir}");
         Console.WriteLine($"  データベース: {dbPath}");
         Console.WriteLine($"  装置: {Path.Combine(dataDir, "assets")}");
         Console.WriteLine($"  コンポーネント: {Path.Combine(dataDir, "components")}");

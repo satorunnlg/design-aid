@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1-alpha] - 2026-02-16
+
+### Fixed
+
+- **プロジェクトルート解決ロジックを刷新**
+  - `DesignAid.sln` 検索（開発環境専用）→ `design_aid.db` の上方向探索（最大2階層）に変更
+  - プロジェクト外からのコマンド実行時に適切なエラーメッセージを表示（exit code 3）
+  - 全25+コマンドに `EnsureDataDirectory()` ガードを追加
+
+- **`daid setup` コマンドの引数体系を修正**
+  - `--path` オプション → 位置引数 `name` に変更
+  - `daid setup`: カレントディレクトリをプロジェクトルートとして初期化
+  - `daid setup <name>`: サブディレクトリを作成して初期化
+  - 既存プロジェクトの重複初期化防止（`--force` で上書き可）
+
+- **`daid restore` が `data/` サブディレクトリに復元するバグを修正**
+  - 既存のプロジェクトルートがあればそこに復元するよう変更
+
+- **`daid backup` の独自パス解決を `CommandHelper` に統一**
+
+### Changed
+
+- テストスクリプト (`test-all.ps1`) を DLL 直接実行方式に変更（`dotnet run --project` の CWD 問題を回避）
+- `TEST_SCENARIO.md` を新しい setup 仕様に対応
+- `DESIGN.md` のデータディレクトリ解決セクションを更新
+
 ## [0.3.0-alpha] - 2026-02-15
 
 ### Added

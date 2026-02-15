@@ -210,14 +210,7 @@ design-aid/
 │       │   ├── VectorSearchIntegrationTests.cs
 │       │   └── SqliteIntegrationTests.cs
 │       └── DesignAid.Tests.csproj
-├── data/                                  # 開発用データディレクトリ
-│   ├── design_aid.db                      # 開発用DB（設定は Settings テーブルに格納、gitignore）
-│   ├── assets/                            # 装置
-│   │   └── sample-asset/
-│   │       └── asset.json
-│   └── components/                        # 部品
-│       └── SP-2026-PLATE-01/
-│           └── part.json
+├── .test-integration/                     # 統合テスト用ディレクトリ（gitignore）
 ├── DesignAid.sln
 ├── CLAUDE.md
 └── DESIGN.md
@@ -274,21 +267,20 @@ dotnet add tests/DesignAid.Tests package Moq
 # 依存関係の復元
 dotnet restore
 
-# 開発用データディレクトリ作成
-mkdir -p data/projects
+# プロジェクトディレクトリの初期化（名前付き）
+daid setup my-project
+cd my-project
 
-# 環境変数設定（開発用）
+# または、既存ディレクトリをプロジェクトとして初期化（名前なし）
+mkdir my-project && cd my-project
+daid setup
+
+# 環境変数（オプション: 明示的にプロジェクトルートを指定する場合）
 # Windows (PowerShell)
-$env:DA_DATA_DIR = "./data"
-
-# Windows (cmd)
-set DA_DATA_DIR=./data
+$env:DA_DATA_DIR = "C:/path/to/project"
 
 # Linux/macOS
-export DA_DATA_DIR="./data"
-
-# DB マイグレーション（初回）
-dotnet ef database update --project src/DesignAid
+export DA_DATA_DIR="/path/to/project"
 ```
 
 ### ビルド
@@ -375,7 +367,7 @@ design-aid/
 
 部品 (Component) ※共有リソース
   - 複数の装置から参照可能
-  - データディレクトリに一元管理
+  - プロジェクトディレクトリに一元管理
 ```
 
 | 階層 | 説明 | 例 |
@@ -389,13 +381,15 @@ design-aid/
 - Asset は別の Asset を SubAsset として組み込み可能（過去の装置の再利用）
 - Component は複数の Asset から共有参照可能
 
-### データディレクトリ構造
+### プロジェクトディレクトリ構造
 
-装置（Asset）と部品（Component）はデータディレクトリに一元管理する。
+装置（Asset）と部品（Component）はプロジェクトディレクトリに一元管理する。
+プロジェクトルートは `design_aid.db` の存在で識別される。
 
 ```text
-data/
+<project-root>/                     # daid setup で初期化されたディレクトリ
 ├── design_aid.db                   # SQLite DB（Settings テーブルに設定を格納）
+├── .gitignore                      # DB やインデックスファイルを除外
 ├── assets/                         # 装置（トップレベル）
 │   ├── lifting-unit/
 │   │   └── asset.json              # 装置定義
@@ -431,10 +425,10 @@ data/
 ### 手配境界（Procurement Boundary）
 
 本システムでは、以下のディレクトリ構造を「1つの部品（パーツ）」の最小単位として扱う。
-部品はデータディレクトリの `components/` に一元管理される。
+部品はプロジェクトルートの `components/` に一元管理される。
 
 ```text
-data/components/SP-2026-PLATE-01/
+<project-root>/components/SP-2026-PLATE-01/
   ├── part.json      # パーツ定義（手動/自動生成）
   ├── drawing.dxf    # 製作図面
   └── selection.pdf  # 選定根拠/計算書
@@ -1451,7 +1445,7 @@ public interface IDesignStandard
 全ての設定は SQLite の **Settings テーブル**に一元管理される。
 ブートストラップ（DB の場所特定）のみ環境変数を使用する。
 
-- **ブートストラップ**: `DA_DATA_DIR` 環境変数 or 慣例（`./data`、リポジトリルート検出）
+- **ブートストラップ**: `DA_DATA_DIR` 環境変数 or `design_aid.db` の上方探索（最大2階層）
 - **DB ファイル名**: `design_aid.db` 固定
 - **設定の読み書き**: `daid config show` / `daid config set <key> <value>`
 - **旧 config.json**: `daid setup` 時に自動的に Settings テーブルへ移行
@@ -1483,13 +1477,31 @@ CREATE TABLE Settings (
 | `backup.s3_prefix` | `design-aid-backup/` | S3 プレフィックス |
 | `backup.aws_profile` | `default` | AWS CLI プロファイル |
 
-### データディレクトリ解決
+### プロジェクトルート解決
+
+コマンド実行時、以下の優先順でプロジェクトルート（`design_aid.db` があるディレクトリ）を探索する。
 
 | 優先度 | 方法 | 備考 |
 |--------|------|------|
-| 1 | 環境変数 `DA_DATA_DIR` | 明示的に指定 |
-| 2 | リポジトリルートの `data/` | `DesignAid.sln` を検出 |
-| 3 | カレントディレクトリの `data/` | フォールバック |
+| 1 | 環境変数 `DA_DATA_DIR` | 明示的に指定（後方互換） |
+| 2 | カレントディレクトリに `design_aid.db` | 深さ 0 |
+| 3 | 1 階層上に `design_aid.db` | 深さ 1（assets/ や components/ 内から実行時） |
+| 4 | 2 階層上に `design_aid.db` | 深さ 2（assets/xxx/ や components/xxx/ 内から実行時） |
+
+見つからない場合はエラー（exit code 3）:
+```
+[ERROR] プロジェクトが見つかりません。
+  カレントディレクトリから上方向に design_aid.db を探しましたが見つかりませんでした。
+  対処: プロジェクトディレクトリ内で実行するか、`daid setup` で初期化してください。
+```
+
+#### setup コマンドの動作
+
+| コマンド | 動作 |
+|---------|------|
+| `daid setup` | カレントディレクトリをプロジェクトルートとして初期化 |
+| `daid setup <name>` | `<name>/` ディレクトリを作成し、その中を初期化 |
+| `daid setup --force` | 既存の初期化済みディレクトリを再初期化 |
 
 ### Embedding プロバイダー設計
 

@@ -19,6 +19,7 @@ public class ArchivePartCommand : Command
 
     private static async Task ExecuteAsync(string partNumber)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var partPath = Path.Combine(componentsDir, partNumber);
 

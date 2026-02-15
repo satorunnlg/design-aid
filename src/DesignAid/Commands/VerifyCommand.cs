@@ -22,6 +22,7 @@ public class VerifyCommand : Command
 
     private static void Execute(string? part, string? standard, bool json)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))

@@ -20,6 +20,7 @@ public class AssetListCommand : Command
 
     private static void Execute(bool json, bool verbose)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var assetJsonReader = new AssetJsonReader();
