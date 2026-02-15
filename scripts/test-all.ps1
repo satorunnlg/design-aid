@@ -1,8 +1,11 @@
 # Design Aid CLI 全コマンドテストスクリプト
 # 使用方法: .\scripts\test-all.ps1
 #
-# このスクリプトは data/ ディレクトリを初期化し、全コマンドをテストします。
-# テスト完了後、data/ ディレクトリはクリーンアップされます。
+# このスクリプトはテスト用ディレクトリを作成し、全コマンドをテストします。
+# テスト完了後、テストディレクトリはクリーンアップされます。
+#
+# 注意: dotnet run --project は CWD をプロジェクトディレクトリに変更するため、
+# ビルド済み DLL を直接実行します。
 
 param(
     [switch]$SkipBuild,      # ビルドをスキップ
@@ -23,12 +26,11 @@ if (-not (Test-Path (Join-Path $ProjectRoot "src"))) {
     $ProjectRoot = (Get-Location).Path
 }
 
-# コマンド実行方法の設定
-if ($UseGlobalTool) {
-    $DaidCommand = "daid"
-} else {
-    $DaidCommand = "dotnet run --project $ProjectRoot/src/DesignAid --"
-}
+# DLL パス
+$DaidDll = Join-Path $ProjectRoot "src/DesignAid/bin/Debug/net10.0/daid.dll"
+
+# テストディレクトリ
+$TestDir = Join-Path $ProjectRoot ".test-integration"
 
 # 色付き出力関数
 function Write-Phase {
@@ -70,13 +72,20 @@ function Invoke-Daid {
     Write-Step $Description
     Write-Info "daid $Arguments"
 
-    # dotnet run を使用
-    $cmdArgs = @("run", "--project", "$ProjectRoot/src/DesignAid", "--") + $Arguments.Split(' ')
-
-    if ($Input) {
-        $result = echo $Input | & dotnet $cmdArgs 2>&1
+    if ($UseGlobalTool) {
+        $cmdArgs = $Arguments.Split(' ')
+        if ($Input) {
+            $result = Write-Output $Input | & daid $cmdArgs 2>&1
+        } else {
+            $result = & daid $cmdArgs 2>&1
+        }
     } else {
-        $result = & dotnet $cmdArgs 2>&1
+        $cmdArgs = @($DaidDll) + $Arguments.Split(' ')
+        if ($Input) {
+            $result = Write-Output $Input | & dotnet $cmdArgs 2>&1
+        } else {
+            $result = & dotnet $cmdArgs 2>&1
+        }
     }
 
     if ($Verbose) {
@@ -125,50 +134,61 @@ Write-Host @"
 ============================================
 "@ -ForegroundColor Magenta
 
-Set-Location $ProjectRoot
 Write-Info "プロジェクトルート: $ProjectRoot"
+Write-Info "テストディレクトリ: $TestDir"
 
 # Phase 0: ビルドとツールインストール
-Write-Phase "Phase 0: ビルドとツールインストール"
+Write-Phase "Phase 0: ビルド"
 
 if (-not $SkipBuild) {
     Write-Step "ビルド実行"
-    dotnet build --nologo -v q
+    dotnet build "$ProjectRoot" --nologo -v q
     if ($LASTEXITCODE -ne 0) {
         Write-Error "ビルドに失敗しました"
         exit 1
     }
     Write-Success "ビルド完了"
 
-    Write-Step "グローバルツールの更新"
-    dotnet tool update --global --add-source ./src/DesignAid/bin/Debug/net10.0/ DesignAid --version "*-*" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Info "新規インストールを試行..."
-        dotnet tool install --global --add-source ./src/DesignAid/bin/Debug/net10.0/ DesignAid --version "*-*"
+    if ($UseGlobalTool) {
+        Write-Step "グローバルツールの更新"
+        dotnet tool update --global --add-source ./src/DesignAid/bin/Debug/net10.0/ DesignAid --version "*-*" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Info "新規インストールを試行..."
+            dotnet tool install --global --add-source ./src/DesignAid/bin/Debug/net10.0/ DesignAid --version "*-*"
+        }
+        Write-Success "ツールインストール完了"
     }
-    Write-Success "ツールインストール完了"
 } else {
     Write-Info "ビルドをスキップしました"
 }
 
-# data ディレクトリの初期化
-Write-Step "data ディレクトリのクリーンアップ"
-if (Test-Path "data") {
-    Remove-Item -Recurse -Force "data"
-    Write-Info "既存の data/ を削除しました"
+# DLL の存在確認
+if (-not $UseGlobalTool -and -not (Test-Path $DaidDll)) {
+    Write-Error "DLL が見つかりません: $DaidDll"
+    Write-Error "先にビルドを実行してください: dotnet build"
+    exit 1
 }
 
-# バックアップファイルの削除
-Get-ChildItem -Filter "design-aid-backup_*.zip" -ErrorAction SilentlyContinue | Remove-Item -Force
+# テストディレクトリの初期化
+Write-Step "テストディレクトリのクリーンアップ"
+if (Test-Path $TestDir) {
+    Remove-Item -Recurse -Force $TestDir
+    Write-Info "既存のテストディレクトリを削除しました"
+}
+New-Item -ItemType Directory -Path $TestDir -Force | Out-Null
+Write-Info "テストディレクトリを作成: $TestDir"
+
+# テストディレクトリに移動
+Set-Location $TestDir
 
 # Phase 1: 初期化 (Setup & Config)
 Write-Phase "Phase 1: 初期化 (Setup & Config)"
 
 Add-TestResult (Invoke-Daid "--help" "ヘルプの確認") "help"
-Add-TestResult (Invoke-Daid "setup" "データディレクトリの初期化") "setup"
+Add-TestResult (Invoke-Daid "setup" "プロジェクトディレクトリの初期化") "setup"
 Add-TestResult (Invoke-Daid "config show" "設定の表示") "config show"
 Add-TestResult (Invoke-Daid "config path" "パス情報の表示") "config path"
-Add-TestResult (Invoke-Daid "config set qdrant.enabled false" "Qdrant無効化") "config set"
+Add-TestResult (Invoke-Daid "config set vector_search.enabled true" "ベクトル検索有効化") "config set"
 
 # Phase 2: 装置（Asset）管理
 Write-Phase "Phase 2: 装置（Asset）管理"
@@ -204,6 +224,7 @@ Add-TestResult (Invoke-Daid "verify" "設計基準検証") "verify"
 # Phase 5: 検索
 Write-Phase "Phase 5: 検索"
 
+Add-TestResult (Invoke-Daid "sync --include-vectors" "ベクトルインデックス構築") "sync vectors"
 Add-TestResult (Invoke-Daid "search ベースプレート" "キーワード検索" -AllowFailure) "search"
 
 # Phase 6: 手配
@@ -213,13 +234,14 @@ Add-TestResult (Invoke-Daid "deploy --dry-run" "手配パッケージ確認（�
 
 # 成果物を追加
 Write-Step "成果物を追加"
-$drawingPath = "data/components/BASE-PLATE-001/drawing.dxf"
+$drawingPath = Join-Path $TestDir "components/BASE-PLATE-001/drawing.dxf"
 if (-not (Test-Path (Split-Path $drawingPath))) {
     New-Item -ItemType Directory -Path (Split-Path $drawingPath) -Force | Out-Null
 }
 "テスト図面" | Out-File -FilePath $drawingPath -Encoding UTF8
 Write-Success "成果物を追加しました"
 
+Add-TestResult (Invoke-Daid "sync" "成果物の同期") "sync artifact"
 Add-TestResult (Invoke-Daid "deploy --dry-run" "手配パッケージ確認（成果物あり）") "deploy dry-run with artifact"
 
 # Phase 7: アーカイブ
@@ -233,8 +255,13 @@ Add-TestResult (Invoke-Daid "archive list --json" "アーカイブ一覧（JSON�
 
 # アーカイブ後の一覧確認
 Write-Step "アーカイブ後の一覧確認"
-& dotnet run --project "$ProjectRoot/src/DesignAid" -- asset list
-& dotnet run --project "$ProjectRoot/src/DesignAid" -- part list
+if ($UseGlobalTool) {
+    & daid asset list
+    & daid part list
+} else {
+    & dotnet $DaidDll asset list
+    & dotnet $DaidDll part list
+}
 Write-Success "アーカイブ後の一覧確認完了"
 
 Add-TestResult (Invoke-Daid "archive restore part BOLT-M10-30" "パーツを復元") "archive restore part"
@@ -247,7 +274,7 @@ Write-Phase "Phase 8: バックアップ"
 Add-TestResult (Invoke-Daid "backup --local-only" "ローカルバックアップ") "backup"
 
 # バックアップファイル名を取得
-$backupFile = Get-ChildItem -Filter "design-aid-backup_*.zip" | Select-Object -First 1
+$backupFile = Get-ChildItem -Path $TestDir -Filter "design-aid-backup_*.zip" | Select-Object -First 1
 if ($backupFile) {
     Write-Success "バックアップファイル: $($backupFile.Name)"
 } else {
@@ -277,12 +304,21 @@ if ($backupFile) {
 
     # 再クリーンアップ
     Write-Step "再クリーンアップ"
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- part remove BOLT-M10-30 2>$null
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- part remove MTR-001 2>$null
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- part remove BASE-PLATE-001 2>$null
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- asset remove safety-module 2>$null
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- asset remove control-panel 2>$null
-    "y" | & dotnet run --project "$ProjectRoot/src/DesignAid" -- asset remove lifting-unit 2>$null
+    if ($UseGlobalTool) {
+        "y" | & daid part remove BOLT-M10-30 2>$null
+        "y" | & daid part remove MTR-001 2>$null
+        "y" | & daid part remove BASE-PLATE-001 2>$null
+        "y" | & daid asset remove safety-module 2>$null
+        "y" | & daid asset remove control-panel 2>$null
+        "y" | & daid asset remove lifting-unit 2>$null
+    } else {
+        "y" | & dotnet $DaidDll part remove BOLT-M10-30 2>$null
+        "y" | & dotnet $DaidDll part remove MTR-001 2>$null
+        "y" | & dotnet $DaidDll part remove BASE-PLATE-001 2>$null
+        "y" | & dotnet $DaidDll asset remove safety-module 2>$null
+        "y" | & dotnet $DaidDll asset remove control-panel 2>$null
+        "y" | & dotnet $DaidDll asset remove lifting-unit 2>$null
+    }
     Write-Success "再クリーンアップ完了"
 } else {
     Write-Info "バックアップファイルがないため復元テストをスキップ"
@@ -292,18 +328,17 @@ if ($backupFile) {
 # Phase 11: 完全クリーンアップ
 Write-Phase "Phase 11: 完全クリーンアップ"
 
-if (-not $SkipCleanup) {
-    Write-Step "バックアップファイルの削除"
-    Get-ChildItem -Filter "design-aid-backup_*.zip" -ErrorAction SilentlyContinue | Remove-Item -Force
-    Write-Success "バックアップファイルを削除しました"
+# プロジェクトルートに戻る
+Set-Location $ProjectRoot
 
-    Write-Step "data ディレクトリの削除"
-    if (Test-Path "data") {
-        Remove-Item -Recurse -Force "data"
-        Write-Success "data/ ディレクトリを削除しました"
+if (-not $SkipCleanup) {
+    Write-Step "テストディレクトリの削除"
+    if (Test-Path $TestDir) {
+        Remove-Item -Recurse -Force $TestDir
+        Write-Success "テストディレクトリを削除しました"
     }
 } else {
-    Write-Info "クリーンアップをスキップしました（data/ は残っています）"
+    Write-Info "クリーンアップをスキップしました（テストディレクトリは残っています）"
 }
 
 # テスト結果サマリー

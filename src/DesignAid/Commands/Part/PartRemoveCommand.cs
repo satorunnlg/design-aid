@@ -19,6 +19,7 @@ public class PartRemoveCommand : Command
 
     private static void Execute(string partNumber, bool force)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var partPath = Path.Combine(CommandHelper.GetComponentsDirectory(), partNumber);
         if (!Directory.Exists(partPath))
         {

@@ -70,7 +70,12 @@ public class BackupCommand : Command
     {
         try
         {
-            var dataDir = GetDataDirectory(dataPath);
+            var dataDir = !string.IsNullOrEmpty(dataPath)
+                ? Path.GetFullPath(dataPath)
+                : CommandHelper.EnsureDataDirectory();
+
+            if (dataDir == null)
+                return 3;
 
             if (!Directory.Exists(dataDir))
             {
@@ -339,14 +344,6 @@ public class BackupCommand : Command
             Console.Error.WriteLine("AWS CLI がインストールされ、PATH に追加されていることを確認してください。");
             return 1;
         }
-    }
-
-    private static string GetDataDirectory(string? dataPath)
-    {
-        if (!string.IsNullOrEmpty(dataPath))
-            return Path.GetFullPath(dataPath);
-
-        return Path.Combine(Directory.GetCurrentDirectory(), "data");
     }
 
     private static string FormatFileSize(long bytes)

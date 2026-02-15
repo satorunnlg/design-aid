@@ -95,12 +95,12 @@ desktop.ini
 /deploy_*/
 migration.sql
 
-# Development data directory
+# Development data directory (レガシー)
 /data/*
 !/data/.gitkeep
-!/data/projects/
-/data/projects/*
-!/data/projects/.gitkeep
+
+# 統合テスト用ディレクトリ
+.test-integration/
 
 # Claude Code
 .claude/

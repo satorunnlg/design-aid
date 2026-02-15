@@ -29,6 +29,8 @@ public class ArchiveRestoreCommand : Command
             return;
         }
 
+        if (CommandHelper.EnsureDataDirectory() == null) return;
+
         // アーカイブインデックスから検索
         var indexPath = CommandHelper.GetArchiveIndexPath();
         var archiveIndexReader = new ArchiveIndexReader();

@@ -27,6 +27,7 @@ public class SyncCommand : Command
 
     private static void Execute(bool dryRun, bool includeVectors, bool force, bool json)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))
@@ -275,7 +276,7 @@ public class SyncCommand : Command
             // マイグレーションを適用
             context.Database.Migrate();
 
-            var dataDir = CommandHelper.GetDataDirectory();
+            var dataDir = CommandHelper.GetDataDirectory()!;
             var hnswIndexPath = Path.Combine(dataDir,
                 settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
             using var vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);

@@ -24,7 +24,8 @@ public class StatusCommand : Command
 
     private static void Execute(string? asset, bool json)
     {
-        var dataDir = CommandHelper.GetDataDirectory();
+        var dataDir = CommandHelper.EnsureDataDirectory();
+        if (dataDir == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var dbPath = CommandHelper.GetDatabasePath();
@@ -175,7 +176,7 @@ public class StatusCommand : Command
             optionsBuilder.UseSqlite($"Data Source={dbPath}");
             using var context = new DesignAidDbContext(optionsBuilder.Options);
 
-            var dataDir = CommandHelper.GetDataDirectory();
+            var dataDir = CommandHelper.GetDataDirectory()!;
             var hnswIndexPath = Path.Combine(dataDir,
                 settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
             using var vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);

@@ -1,13 +1,12 @@
 # Design Aid CLI テストシナリオ
 
 このドキュメントは、Design Aid CLI (`daid`) の全コマンドをテストするためのシナリオを定義します。
-空の data ディレクトリから開始し、全ての操作を実行後、再び空の data ディレクトリに戻ります。
+空のプロジェクトディレクトリから開始し、全ての操作を実行後、ディレクトリを完全に削除して終了します。
 
 ## 前提条件
 
 - .NET 10.0 SDK がインストールされていること
-- `daid` がグローバルツールとしてインストールされていること
-- `data/` ディレクトリが存在しないか、空であること
+- `daid` がグローバルツールとしてインストールされていること、またはビルド済み DLL が利用可能なこと
 
 ## グローバルツールのインストール
 
@@ -23,9 +22,19 @@ dotnet tool install --global --add-source ./src/DesignAid/bin/Debug/net10.0/ Des
 
 # または既存の更新
 dotnet tool update --global --add-source ./src/DesignAid/bin/Debug/net10.0/ DesignAid --version "*-*"
+```
 
-# data ディレクトリが存在する場合は削除
-rm -rf data/
+## DLL 直接実行（開発用）
+
+```bash
+# ビルド
+dotnet build
+
+# テストディレクトリを作成して移動
+mkdir .test-integration && cd .test-integration
+
+# DLL を直接実行（dotnet run --project は CWD が変わるため非推奨）
+dotnet ../src/DesignAid/bin/Debug/net10.0/daid.dll <command>
 ```
 
 ---
@@ -42,19 +51,34 @@ daid --help
 # - setup, config, asset, part, check, verify, sync, status, deploy, search, backup, restore, update
 ```
 
-### 1.2 データディレクトリの初期化
+### 1.2 プロジェクトディレクトリの初期化（名前なし）
 
 ```bash
-# setup コマンドを実行
+# テスト用ディレクトリを作成して移動
+mkdir test-project && cd test-project
+
+# setup コマンドを実行（カレントディレクトリを初期化）
 daid setup
 
 # 期待結果:
-# - data/ ディレクトリが作成される
-# - data/assets/ ディレクトリが作成される
-# - data/components/ ディレクトリが作成される
-# - data/design_aid.db が作成される（マイグレーション適用）
+# - カレントディレクトリに assets/ が作成される
+# - カレントディレクトリに components/ が作成される
+# - カレントディレクトリに design_aid.db が作成される（マイグレーション適用）
 # - Settings テーブルにデフォルト設定が書き込まれる
-# - data/.gitignore が作成される
+# - カレントディレクトリに .gitignore が作成される
+```
+
+### 1.2b プロジェクトディレクトリの初期化（名前付き）
+
+```bash
+# 名前付き setup（別テストとして実行）
+daid setup my-project
+
+# 期待結果:
+# - my-project/ ディレクトリが作成される
+# - my-project/assets/ が作成される
+# - my-project/components/ が作成される
+# - my-project/design_aid.db が作成される
 ```
 
 ### 1.3 設定の確認
@@ -66,7 +90,8 @@ daid config show
 # パス情報を表示
 daid config path
 
-# 期待結果: 設定内容が表示される
+# 期待結果: 設定内容とパス情報が表示される
+# - プロジェクトディレクトリがカレントディレクトリとして表示される
 ```
 
 ### 1.4 設定の変更
@@ -79,6 +104,27 @@ daid config show
 daid config set vector_search.enabled true
 
 # 期待結果: vector_search.enabled が true になっている
+```
+
+### 1.5 上方向 DB 探索の確認
+
+```bash
+# assets/ ディレクトリから実行（1階層上に DB）
+cd assets
+daid asset list
+
+# assets/xxx/ ディレクトリから実行（2階層上に DB）
+mkdir test-dir && cd test-dir
+daid asset list
+
+# 期待結果: どちらもプロジェクトルートの DB を検出して正常動作
+
+# DB がないディレクトリから実行
+cd /tmp
+daid asset list
+
+# 期待結果: エラー（exit code 3）
+# [ERROR] プロジェクトが見つかりません。
 ```
 
 ---
@@ -101,8 +147,8 @@ daid asset add lifting-unit --display-name "昇降ユニット"
 
 # 期待結果:
 # - 装置が追加される
-# - data/assets/lifting-unit/ ディレクトリが作成される
-# - data/assets/lifting-unit/asset.json が作成される
+# - assets/lifting-unit/ ディレクトリが作成される
+# - assets/lifting-unit/asset.json が作成される
 ```
 
 ### 2.3 複数装置の追加
@@ -134,7 +180,7 @@ daid asset link lifting-unit --child safety-module --quantity 1 --notes "安全�
 
 # 期待結果:
 # - safety-module が lifting-unit の子装置としてリンクされる
-# - data/assets/lifting-unit/asset_links.json にリンク情報が保存される
+# - assets/lifting-unit/asset_links.json にリンク情報が保存される
 ```
 
 ---
@@ -157,8 +203,8 @@ daid part add BASE-PLATE-001 --type Fabricated --name "ベースプレート"
 
 # 期待結果:
 # - パーツが追加される
-# - data/components/BASE-PLATE-001/ ディレクトリが作成される
-# - data/components/BASE-PLATE-001/part.json が作成される
+# - components/BASE-PLATE-001/ ディレクトリが作成される
+# - components/BASE-PLATE-001/part.json が作成される
 ```
 
 ### 3.3 購入品パーツの追加
@@ -202,7 +248,7 @@ daid part link BOLT-M10-30 --asset lifting-unit --quantity 8
 
 # 期待結果:
 # - パーツが装置にリンクされる
-# - data/assets/lifting-unit/asset_links.json にリンク情報が保存される
+# - assets/lifting-unit/asset_links.json にリンク情報が保存される
 ```
 
 ### 3.7 リンク結果の確認
@@ -306,7 +352,10 @@ daid deploy --dry-run
 
 ```bash
 # パーツに成果物を追加
-echo "テスト図面" > data/components/BASE-PLATE-001/drawing.dxf
+echo "テスト図面" > components/BASE-PLATE-001/drawing.dxf
+
+# 同期して成果物を登録
+daid sync
 
 # ドライランを再実行
 daid deploy --dry-run
@@ -335,9 +384,9 @@ daid archive list
 daid archive asset control-panel
 
 # 期待結果:
-# - data/archive/assets/control-panel.zip が作成される
-# - data/archive_index.json にエントリが追加される
-# - data/assets/control-panel/ が削除される
+# - archive/assets/control-panel.zip が作成される
+# - archive_index.json にエントリが追加される
+# - assets/control-panel/ が削除される
 # - 圧縮率が表示される
 ```
 
@@ -348,9 +397,9 @@ daid archive asset control-panel
 daid archive part BOLT-M10-30
 
 # 期待結果:
-# - data/archive/components/BOLT-M10-30.zip が作成される
-# - data/archive_index.json にエントリが追加される
-# - data/components/BOLT-M10-30/ が削除される
+# - archive/components/BOLT-M10-30.zip が作成される
+# - archive_index.json にエントリが追加される
+# - components/BOLT-M10-30/ が削除される
 ```
 
 ### 7.4 アーカイブ一覧（確認）
@@ -389,7 +438,7 @@ daid part list
 daid archive restore part BOLT-M10-30
 
 # 期待結果:
-# - data/components/BOLT-M10-30/ が復元される
+# - components/BOLT-M10-30/ が復元される
 # - アーカイブファイルが削除される
 # - archive_index.json からエントリが削除される
 ```
@@ -400,7 +449,7 @@ daid archive restore part BOLT-M10-30
 daid archive restore asset control-panel
 
 # 期待結果:
-# - data/assets/control-panel/ が復元される
+# - assets/control-panel/ が復元される
 # - アーカイブファイルが削除される
 # - archive_index.json からエントリが削除される
 ```
@@ -512,7 +561,7 @@ daid asset list
 # 確認プロンプトに y で回答
 daid restore ./design-aid-backup_YYYYMMDD_HHMMSS.zip
 
-# 期待結果: データが復元される
+# 期待結果: プロジェクトディレクトリにデータが復元される
 ```
 
 ### 10.2 復元後のデータ確認
@@ -554,23 +603,24 @@ rm -f *.zip
 # 期待結果: ZIP ファイルが削除される
 ```
 
-### 11.2 data ディレクトリの削除
+### 11.2 テストディレクトリの削除
 
 ```bash
-# data ディレクトリを完全に削除
-rm -rf data/
+# テストディレクトリに戻って削除
+cd ..
+rm -rf test-project/
 
 # ディレクトリが存在しないことを確認
-ls -la data/ 2>&1 || echo "data directory removed successfully"
+ls -la test-project/ 2>&1 || echo "test directory removed successfully"
 
-# 期待結果: "No such file or directory" または "data directory removed successfully"
+# 期待結果: "No such file or directory" または "test directory removed successfully"
 ```
 
 ---
 
 ## テスト完了チェックリスト
 
-- [ ] Phase 1: setup, config コマンドが正常動作
+- [ ] Phase 1: setup（名前なし・名前付き）, config, 上方向 DB 探索が正常動作
 - [ ] Phase 2: asset add/list/link/unlink が正常動作
 - [ ] Phase 3: part add/list/link/remove が正常動作
 - [ ] Phase 4: status, check, sync, verify が正常動作
@@ -580,10 +630,12 @@ ls -la data/ 2>&1 || echo "data directory removed successfully"
 - [ ] Phase 8: backup が正常動作
 - [ ] Phase 9: 全削除操作が正常動作
 - [ ] Phase 10: restore が正常動作
-- [ ] Phase 11: data/ ディレクトリが完全に削除可能
+- [ ] Phase 11: テストディレクトリが完全に削除可能
 
 ## 備考
 
+- プロジェクトルートは `design_aid.db` の存在で識別される
+- コマンドはカレントディレクトリから上方向に最大2階層まで `design_aid.db` を探索する
 - ベクトル検索は SQLite + HNSW で組み込み実装されており、外部サービス（Docker 等）は不要です
 - ベクトル検索を利用するには `daid sync --include-vectors` でインデックスを構築してください
 - AWS S3 バックアップは AWS CLI/プロファイルが設定されていない場合はスキップしてください

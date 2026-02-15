@@ -7,36 +7,55 @@ using Microsoft.EntityFrameworkCore;
 namespace DesignAid.Commands;
 
 /// <summary>
-/// da setup - データディレクトリの初期化コマンド。
+/// daid setup - プロジェクトディレクトリの初期化コマンド。
+/// 名前を指定した場合はディレクトリを作成し、省略時はカレントディレクトリを初期化する。
 /// </summary>
 public class SetupCommand : Command
 {
-    public SetupCommand() : base("setup", "データディレクトリを初期化する")
+    public SetupCommand() : base("setup", "プロジェクトディレクトリを初期化する")
     {
-        var pathOption = new Option<string?>(
-            aliases: ["--path", "-p"],
-            description: "初期化するデータディレクトリのパス（省略時: カレントディレクトリの data/）");
+        var nameArgument = new Argument<string?>(
+            name: "name",
+            description: "プロジェクト名（ディレクトリ名）。省略時はカレントディレクトリを初期化",
+            getDefaultValue: () => null);
 
         var forceOption = new Option<bool>(
             aliases: ["--force", "-f"],
             description: "既存の設定を上書きする");
 
-        AddOption(pathOption);
+        AddArgument(nameArgument);
         AddOption(forceOption);
 
         Handler = CommandHandler.Create<string?, bool>(ExecuteAsync);
     }
 
-    private async Task<int> ExecuteAsync(string? path, bool force)
+    private async Task<int> ExecuteAsync(string? name, bool force)
     {
         try
         {
-            // データディレクトリのパスを決定
-            var dataDir = string.IsNullOrEmpty(path)
-                ? Path.Combine(Directory.GetCurrentDirectory(), "data")
-                : Path.GetFullPath(path);
+            // プロジェクトルートのパスを決定
+            string dataDir;
+            if (string.IsNullOrEmpty(name))
+            {
+                // 名前なし: カレントディレクトリをプロジェクトルートとして初期化
+                dataDir = Directory.GetCurrentDirectory();
+            }
+            else
+            {
+                // 名前あり: カレントディレクトリ内にディレクトリを作成
+                dataDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), name));
+            }
 
-            Console.WriteLine($"データディレクトリを初期化します: {dataDir}");
+            // 既に初期化済みかチェック
+            var dbPath = Path.Combine(dataDir, CommandHelper.DatabaseFileName);
+            if (File.Exists(dbPath) && !force)
+            {
+                Console.Error.WriteLine($"[ERROR] 既に初期化されています: {dataDir}");
+                Console.Error.WriteLine("  上書きするには --force オプションを使用してください。");
+                return 1;
+            }
+
+            Console.WriteLine($"プロジェクトディレクトリを初期化します: {dataDir}");
             Console.WriteLine();
 
             // ディレクトリ構造の作成
@@ -52,11 +71,11 @@ public class SetupCommand : Command
                 if (!Directory.Exists(dir))
                 {
                     Directory.CreateDirectory(dir);
-                    Console.WriteLine($"  [作成] {Path.GetRelativePath(dataDir, dir)}/");
+                    Console.WriteLine($"  [作成] {GetRelativeDisplay(dataDir, dir)}/");
                 }
                 else
                 {
-                    Console.WriteLine($"  [存在] {Path.GetRelativePath(dataDir, dir)}/");
+                    Console.WriteLine($"  [存在] {GetRelativeDisplay(dataDir, dir)}/");
                 }
             }
 
@@ -65,7 +84,7 @@ public class SetupCommand : Command
             if (!File.Exists(gitignorePath) || force)
             {
                 var gitignoreContent = """
-                    # Design Aid データディレクトリ用 .gitignore
+                    # Design Aid プロジェクト用 .gitignore
 
                     # SQLite データベース（ローカル環境固有）
                     *.db
@@ -82,6 +101,9 @@ public class SetupCommand : Command
 
                     # 一時ファイル
                     *.tmp
+
+                    # ダッシュボード PID ファイル
+                    .dashboard.pid
                     """;
 
                 await File.WriteAllTextAsync(gitignorePath, gitignoreContent);
@@ -93,14 +115,13 @@ public class SetupCommand : Command
             }
 
             // SQLite データベースの初期化（マイグレーション適用）
-            var dbPath = Path.Combine(dataDir, "design_aid.db");
             try
             {
                 var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
                 optionsBuilder.UseSqlite($"Data Source={dbPath}");
                 using var context = new DesignAidDbContext(optionsBuilder.Options);
                 context.Database.Migrate();
-                Console.WriteLine($"  [作成] design_aid.db（マイグレーション適用）");
+                Console.WriteLine($"  [作成] {CommandHelper.DatabaseFileName}（マイグレーション適用）");
 
                 // 既存の config.json があれば Settings テーブルに移行
                 var configJsonPath = Path.Combine(dataDir, "config.json");
@@ -148,5 +169,15 @@ public class SetupCommand : Command
             Console.Error.WriteLine($"エラー: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// プロジェクトルートからの相対パスを表示用に取得する。
+    /// ルート自身の場合は "." を返す。
+    /// </summary>
+    private static string GetRelativeDisplay(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        return relative == "." ? Path.GetFileName(root) : relative;
     }
 }

@@ -32,6 +32,7 @@ public class PartAddCommand : Command
             return;
         }
 
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         Directory.CreateDirectory(componentsDir);
         var partPath = Path.Combine(componentsDir, partNumber);

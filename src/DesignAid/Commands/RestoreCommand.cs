@@ -255,6 +255,12 @@ public class RestoreCommand : Command
         if (!string.IsNullOrEmpty(dataPath))
             return Path.GetFullPath(dataPath);
 
-        return Path.Combine(Directory.GetCurrentDirectory(), "data");
+        // 既存のプロジェクトルートがあればそこに復元
+        var projectRoot = CommandHelper.FindProjectRoot();
+        if (projectRoot != null)
+            return projectRoot;
+
+        // なければカレントディレクトリに復元
+        return Directory.GetCurrentDirectory();
     }
 }

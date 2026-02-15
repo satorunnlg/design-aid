@@ -19,6 +19,7 @@ public class PartListCommand : Command
 
     private static void Execute(bool json)
     {
+        if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var partJsonReader = new PartJsonReader();
         var parts = new List<object>();

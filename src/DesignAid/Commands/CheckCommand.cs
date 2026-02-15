@@ -23,6 +23,7 @@ public class CheckCommand : Command
 
     private static void Execute(string? path, bool json, bool verbose)
     {
+        if (path == null && CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = path ?? CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))
