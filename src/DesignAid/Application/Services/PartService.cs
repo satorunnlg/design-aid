@@ -8,7 +8,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// パーツ管理を行うサービス。
 /// </summary>
-public class PartService
+public class PartService : IPartService
 {
     private readonly DesignAidDbContext _context;
 

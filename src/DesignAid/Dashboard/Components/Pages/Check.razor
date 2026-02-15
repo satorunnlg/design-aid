@@ -1,0 +1,138 @@
+@page "/check"
+@inject DashboardService DashboardService
+
+<PageTitle>整合性チェック - Design Aid</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">整合性チェック</MudText>
+
+<MudButton Variant="Variant.Filled" Color="Color.Primary"
+           StartIcon="@Icons.Material.Filled.PlayArrow"
+           OnClick="RunCheckAsync"
+           Disabled="_running"
+           Class="mb-4">
+    @if (_running)
+    {
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+        @:チェック実行中...
+    }
+    else
+    {
+        @:チェック実行
+    }
+</MudButton>
+
+@if (_results is not null)
+{
+    @* サマリー *@
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Success">OK</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">@_okCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Warning">警告</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Warning">@_warningCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Error">エラー</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Error">@_errorCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* 結果テーブル *@
+    <MudSimpleTable Dense="true" Hover="true" Striped="true">
+        <thead>
+            <tr>
+                <th style="width: 80px;">結果</th>
+                <th>型式</th>
+                <th>名称</th>
+                <th>種別</th>
+                <th>ステータス</th>
+                <th>メッセージ</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _results)
+            {
+                <tr>
+                    <td>
+                        @switch (item.CheckStatus)
+                        {
+                            case "Ok":
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                                break;
+                            case "Warning":
+                                <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                                break;
+                            case "Error":
+                                <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" Size="Size.Small" />
+                                break;
+                        }
+                    </td>
+                    <td><MudText Typo="Typo.body2" Style="font-weight: 600;">@item.PartNumber</MudText></td>
+                    <td>@item.Name</td>
+                    <td>@item.Type</td>
+                    <td>@item.Status</td>
+                    <td>
+                        <MudText Typo="Typo.body2" Style="@(item.CheckStatus == "Error" ? "color: var(--mud-palette-error);" : "")">
+                            @item.Message
+                        </MudText>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+
+    <MudText Typo="Typo.caption" Class="mt-2" Color="Color.Secondary">
+        @_results.Count 件チェック済み
+    </MudText>
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">@_error</MudAlert>
+}
+
+@code {
+    private List<IntegrityCheckItem>? _results;
+    private bool _running;
+    private string? _error;
+    private int _okCount;
+    private int _warningCount;
+    private int _errorCount;
+
+    private async Task RunCheckAsync()
+    {
+        _running = true;
+        _error = null;
+        _results = null;
+        StateHasChanged();
+
+        try
+        {
+            _results = await DashboardService.RunIntegrityCheckAsync();
+            _okCount = _results.Count(r => r.CheckStatus == "Ok");
+            _warningCount = _results.Count(r => r.CheckStatus == "Warning");
+            _errorCount = _results.Count(r => r.CheckStatus == "Error");
+        }
+        catch (Exception ex)
+        {
+            _error = $"チェックに失敗しました: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+}

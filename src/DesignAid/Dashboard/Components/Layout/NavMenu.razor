@@ -1,0 +1,30 @@
+<MudNavMenu>
+    <MudText Typo="Typo.h6" Class="px-4 py-3" Style="font-weight: 600;">
+        DA
+    </MudText>
+    <MudDivider Class="mb-2" />
+
+    <MudNavLink Href="/" Match="NavLinkMatch.All"
+                Icon="@Icons.Material.Filled.Dashboard">
+        ダッシュボード
+    </MudNavLink>
+    <MudNavLink Href="/parts" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Filled.Settings">
+        パーツ一覧
+    </MudNavLink>
+    <MudNavLink Href="/assets" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Filled.Inventory2">
+        装置一覧
+    </MudNavLink>
+
+    <MudDivider Class="my-2" />
+
+    <MudNavLink Href="/check" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Filled.VerifiedUser">
+        整合性チェック
+    </MudNavLink>
+    <MudNavLink Href="/search" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Filled.Search">
+        類似検索
+    </MudNavLink>
+</MudNavMenu>

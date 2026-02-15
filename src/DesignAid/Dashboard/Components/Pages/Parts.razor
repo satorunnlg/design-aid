@@ -1,0 +1,146 @@
+@page "/parts"
+@page "/parts/{PartNumber}"
+@inject DashboardService DashboardService
+
+<PageTitle>パーツ一覧 - Design Aid</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">パーツ一覧</MudText>
+
+@* フィルター *@
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="4">
+        <MudTextField @bind-Value="_searchText"
+                      Placeholder="型式・名称で検索..."
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      DebounceInterval="300"
+                      OnDebounceIntervalElapsed="LoadPartsAsync" />
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudSelect T="PartType?" Value="_typeFilter" Label="種別"
+                   Clearable="true" ValueChanged="OnTypeFilterChanged">
+            <MudSelectItem T="PartType?" Value="@(PartType.Fabricated)">製作物</MudSelectItem>
+            <MudSelectItem T="PartType?" Value="@(PartType.Purchased)">購入品</MudSelectItem>
+            <MudSelectItem T="PartType?" Value="@(PartType.Standard)">規格品</MudSelectItem>
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudSelect T="HandoverStatus?" Value="_statusFilter" Label="ステータス"
+                   Clearable="true" ValueChanged="OnStatusFilterChanged">
+            <MudSelectItem T="HandoverStatus?" Value="@(HandoverStatus.Draft)">設計中</MudSelectItem>
+            <MudSelectItem T="HandoverStatus?" Value="@(HandoverStatus.Ordered)">手配済み</MudSelectItem>
+            <MudSelectItem T="HandoverStatus?" Value="@(HandoverStatus.Delivered)">納品済み</MudSelectItem>
+            <MudSelectItem T="HandoverStatus?" Value="@(HandoverStatus.Canceled)">キャンセル</MudSelectItem>
+        </MudSelect>
+    </MudItem>
+</MudGrid>
+
+@if (_loading)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+}
+else
+{
+    <MudSimpleTable Dense="true" Hover="true" Striped="true">
+        <thead>
+            <tr>
+                <th>型式</th>
+                <th>名称</th>
+                <th>種別</th>
+                <th>ステータス</th>
+                <th>更新日時</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (_parts.Count == 0)
+            {
+                <tr>
+                    <td colspan="5" style="text-align: center;">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            該当するパーツがありません
+                        </MudText>
+                    </td>
+                </tr>
+            }
+            else
+            {
+                @foreach (var part in _parts)
+                {
+                    <tr>
+                        <td><MudText Typo="Typo.body2" Style="font-weight: 600;">@part.PartNumber</MudText></td>
+                        <td>@part.Name</td>
+                        <td>@part.Type</td>
+                        <td>
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@GetStatusColor(part.Status)">
+                                @part.Status
+                            </MudChip>
+                        </td>
+                        <td>@part.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </MudSimpleTable>
+
+    <MudText Typo="Typo.caption" Class="mt-2" Color="Color.Secondary">
+        @_parts.Count 件表示
+    </MudText>
+}
+
+@code {
+    [Parameter] public string? PartNumber { get; set; }
+
+    private List<PartSummaryItem> _parts = [];
+    private bool _loading = true;
+    private string? _searchText;
+    private PartType? _typeFilter;
+    private HandoverStatus? _statusFilter;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrEmpty(PartNumber))
+            _searchText = PartNumber;
+
+        await LoadPartsAsync();
+    }
+
+    private async Task LoadPartsAsync()
+    {
+        _loading = true;
+        try
+        {
+            _parts = await DashboardService.GetPartsAsync(_typeFilter, _statusFilter, _searchText);
+        }
+        catch
+        {
+            _parts = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnTypeFilterChanged(PartType? value)
+    {
+        _typeFilter = value;
+        await LoadPartsAsync();
+    }
+
+    private async Task OnStatusFilterChanged(HandoverStatus? value)
+    {
+        _statusFilter = value;
+        await LoadPartsAsync();
+    }
+
+    private static Color GetStatusColor(string status) => status switch
+    {
+        "設計中" => Color.Default,
+        "手配済み" => Color.Warning,
+        "納品済み" => Color.Success,
+        "キャンセル" => Color.Error,
+        _ => Color.Default
+    };
+}

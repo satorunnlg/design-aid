@@ -1,0 +1,142 @@
+@page "/search"
+@inject DashboardService DashboardService
+
+<PageTitle>類似検索 - Design Aid</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">類似検索</MudText>
+
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="8">
+        <MudTextField @bind-Value="_query"
+                      Label="検索クエリ"
+                      Placeholder="パーツ名・型式・材質などを入力..."
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined"
+                      OnKeyUp="OnKeyUp" />
+    </MudItem>
+    <MudItem xs="12" sm="4" Class="d-flex align-end">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="ExecuteSearchAsync"
+                   Disabled="_searching || string.IsNullOrWhiteSpace(_query)"
+                   FullWidth="true">
+            @if (_searching)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                @:検索中...
+            }
+            else
+            {
+                @:検索
+            }
+        </MudButton>
+    </MudItem>
+</MudGrid>
+
+@if (_results is not null)
+{
+    @if (_results.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">該当する結果が見つかりませんでした</MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.subtitle2" Class="mb-2" Color="Color.Secondary">
+            @_results.Count 件の結果
+        </MudText>
+
+        @foreach (var hit in _results)
+        {
+            <MudCard Elevation="1" Class="mb-2">
+                <MudCardContent>
+                    <MudGrid>
+                        <MudItem xs="12" sm="9">
+                            <MudText Typo="Typo.subtitle1" Style="font-weight: 600;">
+                                @hit.PartNumber — @hit.Name
+                            </MudText>
+                            @if (!string.IsNullOrEmpty(hit.Type))
+                            {
+                                <MudChip T="string" Size="Size.Small" Class="mr-1">@hit.Type</MudChip>
+                            }
+                            @if (!string.IsNullOrEmpty(hit.Status))
+                            {
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@GetStatusColor(hit.Status)">
+                                    @hit.Status
+                                </MudChip>
+                            }
+                        </MudItem>
+                        <MudItem xs="12" sm="3" Class="d-flex align-center justify-end">
+                            <MudText Typo="Typo.h6" Color="Color.Primary">
+                                @hit.Score.ToString("P0")
+                            </MudText>
+                        </MudItem>
+                    </MudGrid>
+                </MudCardContent>
+            </MudCard>
+        }
+    }
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">@_error</MudAlert>
+}
+else if (!_hasSearched)
+{
+    <MudAlert Severity="Severity.Info" Class="mt-4">
+        テキストを入力して検索してください。ベクトルインデックスが構築されている場合、類似パーツを検索できます。
+        <br />
+        <MudText Typo="Typo.caption">
+            インデックス未構築の場合は CLI で <code>daid sync --include-vectors</code> を実行してください。
+        </MudText>
+    </MudAlert>
+}
+
+@code {
+    private string? _query;
+    private List<SearchHitItem>? _results;
+    private bool _searching;
+    private bool _hasSearched;
+    private string? _error;
+
+    private async Task OnKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_query))
+        {
+            await ExecuteSearchAsync();
+        }
+    }
+
+    private async Task ExecuteSearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_query)) return;
+
+        _searching = true;
+        _error = null;
+        _results = null;
+        _hasSearched = true;
+        StateHasChanged();
+
+        try
+        {
+            _results = await DashboardService.SearchPartsAsync(_query);
+        }
+        catch (Exception ex)
+        {
+            _error = $"検索に失敗しました: {ex.Message}";
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private static Color GetStatusColor(string status) => status switch
+    {
+        "設計中" => Color.Default,
+        "手配済み" => Color.Warning,
+        "納品済み" => Color.Success,
+        "キャンセル" => Color.Error,
+        _ => Color.Default
+    };
+}

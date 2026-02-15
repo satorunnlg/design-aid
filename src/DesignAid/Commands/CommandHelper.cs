@@ -1,6 +1,8 @@
-using DesignAid.Application.Services;
-using DesignAid.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using DesignAid.Application.Services;
+using DesignAid.Configuration;
+using DesignAid.Infrastructure.Persistence;
 
 namespace DesignAid.Commands;
 
@@ -96,5 +98,27 @@ public static class CommandHelper
             service.LoadAsync(context).GetAwaiter().GetResult();
         }
         return service;
+    }
+
+    /// <summary>
+    /// DI コンテナを構築して ServiceProvider を返す。
+    /// Dashboard や将来の GUI から利用する。
+    /// </summary>
+    public static ServiceProvider BuildServiceProvider()
+    {
+        var dataDir = GetDataDirectory();
+        var dbPath = GetDatabasePath();
+
+        var services = new ServiceCollection();
+        services.AddDesignAidServices(dbPath, dataDir);
+        return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// ダッシュボード PID ファイルのパスを取得する。
+    /// </summary>
+    public static string GetDashboardPidPath()
+    {
+        return Path.Combine(GetDataDirectory(), ".dashboard.pid");
     }
 }

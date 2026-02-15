@@ -8,7 +8,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// 類似設計検索を行うサービス。
 /// </summary>
-public class SearchService
+public class SearchService : ISearchService
 {
     private readonly DesignAidDbContext? _context;
     private readonly VectorSearchService? _vectorSearchService;

@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-02-15
+
+### Added
+
+- **Web ダッシュボード (`daid dashboard`)**
+  - Blazor Server + MudBlazor によるダッシュボード UI
+  - `daid dashboard [--port 5180] [--no-browser]` で起動
+  - `daid dashboard stop` で停止
+  - PID ファイルによる重複起動防止、Graceful Shutdown 対応
+  - 5 画面: ダッシュボード（トップ）、パーツ一覧、装置一覧、整合性チェック、類似検索
+
+- **DI 基盤 (ServiceCollectionExtensions)**
+  - 全サービスのインターフェース抽出（8 インターフェース）
+  - `AddDesignAidServices()` 拡張メソッドによる一括 DI 登録
+  - CLI / Dashboard / 将来の Avalonia UI で Application Layer を共有する設計
+
+- **DashboardService**
+  - ダッシュボードサマリー取得（装置数・パーツ数・ステータス集計）
+  - パーツ一覧（種別・ステータス・テキストフィルター）
+  - 装置一覧・詳細（パーツ展開）
+  - 整合性チェック実行
+  - 類似検索（ISearchService 経由）
+
+- **DashboardServiceTests**
+  - 11 件のユニットテスト追加
+
+### Changed
+
+- **csproj SDK を `Microsoft.NET.Sdk.Web` に変更**
+  - Blazor Server の Razor コンパイルに対応
+  - `IsPackable=true` を明示（Web SDK デフォルトは false）
+
+- **サービスクラスにインターフェース実装を追加**
+  - AssetService, PartService, HashService, SyncService, SearchService,
+    SettingsService, ValidationService, DeployService
+
 ## [0.2.0-alpha] - 2026-02-15
 
 ### Changed

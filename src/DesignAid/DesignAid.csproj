@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -15,7 +15,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>daid</ToolCommandName>
     <PackageId>DesignAid</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.3.0-alpha</Version>
     <Authors>satorunnlg</Authors>
     <Description>Design Aid - 機械設計支援システム CLI</Description>
     <PackageProjectUrl>https://github.com/satorunnlg/design-aid</PackageProjectUrl>
@@ -24,19 +24,23 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- バージョン表示からコミットハッシュを除外 -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Blazor Server（ダッシュボード）対応: SDK を Microsoft.NET.Sdk.Web に変更 -->
+    <!-- Web SDK はデフォルト IsPackable=false のため明示的に有効化 -->
+    <IsPackable>true</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
-  <ItemGroup>
+<ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.2" />
     <PackageReference Include="HNSW" Version="26.1.63669" />
+    <PackageReference Include="MudBlazor" Version="8.15.0" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageReference Include="System.CommandLine.NamingConventionBinder" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>

@@ -3,6 +3,7 @@ using System.Text;
 using DesignAid.Commands;
 using DesignAid.Commands.Archive;
 using DesignAid.Commands.Asset;
+using DesignAid.Commands.Dashboard;
 using DesignAid.Commands.Part;
 
 namespace DesignAid;
@@ -42,6 +43,9 @@ public class Program
 
             // アーカイブ（容量節約）
             new ArchiveCommand(),
+
+            // ダッシュボード
+            new DashboardCommand(),
 
             // ツール管理
             new UpdateCommand()

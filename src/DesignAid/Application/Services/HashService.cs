@@ -9,7 +9,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// ファイルハッシュの計算・検証を行うサービス。
 /// </summary>
-public class HashService
+public class HashService : IHashService
 {
     /// <summary>
     /// ファイルの SHA256 ハッシュを計算する。

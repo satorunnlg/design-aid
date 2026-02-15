@@ -1,0 +1,217 @@
+@page "/"
+@inject DashboardService DashboardService
+
+<PageTitle>ダッシュボード - Design Aid</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">ダッシュボード</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+}
+else if (_summary is not null)
+{
+    @* サマリーカード *@
+    <MudGrid>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary">装置数</MudText>
+                    <MudText Typo="Typo.h4">@_summary.AssetCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary">パーツ数</MudText>
+                    <MudText Typo="Typo.h4">@_summary.PartCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary">手配済み</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Warning">@_summary.StatusSummary.Ordered</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary">納品済み</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">@_summary.StatusSummary.Delivered</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* 種別集計 + ステータス集計 *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <MudText Typo="Typo.h6">種別別集計</MudText>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <thead>
+                            <tr>
+                                <th>種別</th>
+                                <th style="text-align: right;">件数</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>製作物</td>
+                                <td style="text-align: right;">@_summary.TypeSummary.Fabricated</td>
+                            </tr>
+                            <tr>
+                                <td>購入品</td>
+                                <td style="text-align: right;">@_summary.TypeSummary.Purchased</td>
+                            </tr>
+                            <tr>
+                                <td>規格品</td>
+                                <td style="text-align: right;">@_summary.TypeSummary.Standard</td>
+                            </tr>
+                            <tr style="font-weight: bold;">
+                                <td>合計</td>
+                                <td style="text-align: right;">@_summary.TypeSummary.Total</td>
+                            </tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <MudText Typo="Typo.h6">ステータス別集計</MudText>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <thead>
+                            <tr>
+                                <th>ステータス</th>
+                                <th style="text-align: right;">件数</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">設計中</MudChip>
+                                </td>
+                                <td style="text-align: right;">@_summary.StatusSummary.Draft</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">手配済み</MudChip>
+                                </td>
+                                <td style="text-align: right;">@_summary.StatusSummary.Ordered</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">納品済み</MudChip>
+                                </td>
+                                <td style="text-align: right;">@_summary.StatusSummary.Delivered</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error">キャンセル</MudChip>
+                                </td>
+                                <td style="text-align: right;">@_summary.StatusSummary.Canceled</td>
+                            </tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* 最近更新されたパーツ *@
+    <MudCard Elevation="2" Class="mt-4">
+        <MudCardHeader>
+            <MudText Typo="Typo.h6">最近更新されたパーツ</MudText>
+        </MudCardHeader>
+        <MudCardContent>
+            @if (_summary.RecentParts.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    パーツが登録されていません
+                </MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="true">
+                    <thead>
+                        <tr>
+                            <th>型式</th>
+                            <th>名称</th>
+                            <th>種別</th>
+                            <th>ステータス</th>
+                            <th>更新日時</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var part in _summary.RecentParts)
+                        {
+                            <tr>
+                                <td>
+                                    <MudLink Href="@($"/parts/{part.PartNumber}")">
+                                        @part.PartNumber
+                                    </MudLink>
+                                </td>
+                                <td>@part.Name</td>
+                                <td>@part.Type</td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small"
+                                             Color="@GetStatusColor(part.Status)">
+                                        @part.Status
+                                    </MudChip>
+                                </td>
+                                <td>@part.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudCardContent>
+    </MudCard>
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">@_error</MudAlert>
+}
+
+@code {
+    private DashboardSummary? _summary;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _summary = await DashboardService.GetSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"データの読み込みに失敗しました: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color GetStatusColor(string status) => status switch
+    {
+        "設計中" => Color.Default,
+        "手配済み" => Color.Warning,
+        "納品済み" => Color.Success,
+        "キャンセル" => Color.Error,
+        _ => Color.Default
+    };
+}
