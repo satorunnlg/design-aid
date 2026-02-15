@@ -9,7 +9,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// 設計基準に基づくバリデーションを行うサービス。
 /// </summary>
-public class ValidationService
+public class ValidationService : IValidationService
 {
     private readonly DesignAidDbContext _context;
     private readonly HashService _hashService;

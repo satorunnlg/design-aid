@@ -8,7 +8,7 @@ namespace DesignAid.Application.Services;
 /// DB の Settings テーブルを介した設定管理サービス。
 /// シングルトンライクに動作し、全設定を一元管理する。
 /// </summary>
-public class SettingsService
+public class SettingsService : ISettingsService
 {
     /// <summary>
     /// 既知の設定キーとデフォルト値の定義。

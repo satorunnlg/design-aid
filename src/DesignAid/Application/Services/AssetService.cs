@@ -7,7 +7,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// 装置管理を行うサービス。
 /// </summary>
-public class AssetService
+public class AssetService : IAssetService
 {
     private readonly DesignAidDbContext _context;
 

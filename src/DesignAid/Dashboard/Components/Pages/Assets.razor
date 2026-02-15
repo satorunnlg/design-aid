@@ -1,0 +1,182 @@
+@page "/assets"
+@inject DashboardService DashboardService
+
+<PageTitle>装置一覧 - Design Aid</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">装置一覧</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+}
+else if (_selectedAsset is not null)
+{
+    @* 装置詳細ビュー *@
+    <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+               OnClick="ClearSelection" Class="mb-2">
+        一覧に戻る
+    </MudButton>
+
+    <MudCard Elevation="2" Class="mb-4">
+        <MudCardHeader>
+            <MudText Typo="Typo.h6">@(_selectedAsset.DisplayName ?? _selectedAsset.Name)</MudText>
+        </MudCardHeader>
+        <MudCardContent>
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">装置名</MudText>
+                    <MudText>@_selectedAsset.Name</MudText>
+                </MudItem>
+                @if (!string.IsNullOrEmpty(_selectedAsset.Description))
+                {
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">説明</MudText>
+                        <MudText>@_selectedAsset.Description</MudText>
+                    </MudItem>
+                }
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">ディレクトリ</MudText>
+                    <MudText Typo="Typo.body2" Style="word-break: break-all;">@_selectedAsset.DirectoryPath</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">作成日</MudText>
+                    <MudText>@_selectedAsset.CreatedAt.ToString("yyyy-MM-dd")</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">更新日</MudText>
+                    <MudText>@_selectedAsset.UpdatedAt.ToString("yyyy-MM-dd")</MudText>
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+
+    <MudText Typo="Typo.h6" Class="mb-2">パーツ (@_selectedAsset.Parts.Count 件)</MudText>
+
+    @if (_selectedAsset.Parts.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">この装置にはパーツが登録されていません</MudAlert>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" Striped="true">
+            <thead>
+                <tr>
+                    <th>型式</th>
+                    <th>名称</th>
+                    <th>種別</th>
+                    <th>ステータス</th>
+                    <th style="text-align: right;">数量</th>
+                    <th>備考</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var part in _selectedAsset.Parts)
+                {
+                    <tr>
+                        <td><MudText Typo="Typo.body2" Style="font-weight: 600;">@part.PartNumber</MudText></td>
+                        <td>@part.Name</td>
+                        <td>@part.Type</td>
+                        <td>
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@GetStatusColor(part.Status)">
+                                @part.Status
+                            </MudChip>
+                        </td>
+                        <td style="text-align: right;">@part.Quantity</td>
+                        <td>@(part.Notes ?? "")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+}
+else
+{
+    @* 装置一覧 *@
+    @if (_assets.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">装置が登録されていません</MudAlert>
+    }
+    else
+    {
+        <MudGrid>
+            @foreach (var asset in _assets)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Elevation="2" Style="cursor: pointer;" @onclick="() => SelectAsset(asset.Id)">
+                        <MudCardHeader>
+                            <MudText Typo="Typo.h6">@(asset.DisplayName ?? asset.Name)</MudText>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@asset.Name</MudText>
+                            @if (!string.IsNullOrEmpty(asset.Description))
+                            {
+                                <MudText Typo="Typo.body2" Class="mt-1">@asset.Description</MudText>
+                            }
+                            <MudDivider Class="my-2" />
+                            <MudText Typo="Typo.body2">
+                                パーツ数: <strong>@asset.PartCount</strong>
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                更新: @asset.UpdatedAt.ToString("yyyy-MM-dd")
+                            </MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <MudText Typo="Typo.caption" Class="mt-2" Color="Color.Secondary">
+            @_assets.Count 件
+        </MudText>
+    }
+}
+
+@code {
+    private List<AssetSummaryItem> _assets = [];
+    private AssetDetailItem? _selectedAsset;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _assets = await DashboardService.GetAssetsAsync();
+        }
+        catch
+        {
+            _assets = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SelectAsset(Guid assetId)
+    {
+        _loading = true;
+        try
+        {
+            _selectedAsset = await DashboardService.GetAssetDetailAsync(assetId);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ClearSelection()
+    {
+        _selectedAsset = null;
+    }
+
+    private static Color GetStatusColor(string status) => status switch
+    {
+        "設計中" => Color.Default,
+        "手配済み" => Color.Warning,
+        "納品済み" => Color.Success,
+        "キャンセル" => Color.Error,
+        _ => Color.Default
+    };
+}

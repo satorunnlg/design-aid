@@ -9,7 +9,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// 手配パッケージの作成と管理を行うサービス。
 /// </summary>
-public class DeployService
+public class DeployService : IDeployService
 {
     private readonly DesignAidDbContext _context;
 

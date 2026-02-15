@@ -9,7 +9,7 @@ namespace DesignAid.Application.Services;
 /// <summary>
 /// ファイルシステムとデータベースの同期を行うサービス。
 /// </summary>
-public class SyncService
+public class SyncService : ISyncService
 {
     private readonly DesignAidDbContext _context;
     private readonly HashService _hashService;
