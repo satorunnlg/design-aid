@@ -3,7 +3,9 @@ using System.CommandLine.NamingConventionBinder;
 using System.Text.Json;
 using DesignAid.Infrastructure.Embedding;
 using DesignAid.Infrastructure.FileSystem;
-using DesignAid.Infrastructure.Qdrant;
+using DesignAid.Infrastructure.Persistence;
+using DesignAid.Infrastructure.VectorSearch;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands;
 
@@ -77,8 +79,8 @@ public class StatusCommand : Command
             }
         }
 
-        // Qdrant 接続状態
-        var qdrantStatus = CheckQdrantConnection();
+        // ベクトルインデックス状態
+        var vectorStatus = CheckVectorIndex();
 
         if (json)
         {
@@ -89,7 +91,7 @@ public class StatusCommand : Command
                     dataDirectory = dataDir,
                     database = dbPath,
                     databaseExists = File.Exists(dbPath),
-                    qdrant = qdrantStatus
+                    vectorIndex = vectorStatus
                 },
                 assets,
                 components = parts,
@@ -109,7 +111,7 @@ public class StatusCommand : Command
             Console.WriteLine("System:");
             Console.WriteLine($"  Data Directory: {dataDir}");
             Console.WriteLine($"  Database: {dbPath} {(File.Exists(dbPath) ? "(exists)" : "(not created)")}");
-            Console.WriteLine($"  Qdrant: {qdrantStatus}");
+            Console.WriteLine($"  Vector Index: {vectorStatus}");
             Console.WriteLine();
 
             // 装置情報
@@ -149,39 +151,46 @@ public class StatusCommand : Command
         }
     }
 
-    private static string CheckQdrantConnection()
+    private static string CheckVectorIndex()
     {
-        var (host, port, collectionName) = CommandHelper.GetQdrantConfig();
-        var enabled = Environment.GetEnvironmentVariable("DA_QDRANT_ENABLED");
+        var settings = CommandHelper.LoadSettings();
 
-        if (enabled?.ToLowerInvariant() == "false")
+        if (!settings.GetBool("vector_search.enabled", true))
         {
             return "Disabled";
         }
 
         try
         {
-            var embeddingProvider = new MockEmbeddingProvider();
-            using var qdrantService = new QdrantService(host, port, embeddingProvider, collectionName);
-
-            var connected = qdrantService.CheckConnectionAsync().GetAwaiter().GetResult();
-            if (!connected)
+            var dbPath = CommandHelper.GetDatabasePath();
+            if (!File.Exists(dbPath))
             {
-                return $"Not connected ({host}:{port})";
+                return "Not initialized (DB not found)";
             }
 
-            var collectionExists = qdrantService.CollectionExistsAsync().GetAwaiter().GetResult();
-            if (!collectionExists)
+            var dimensions = settings.GetInt("embedding.dimensions", 384);
+            var embeddingProvider = new MockEmbeddingProvider(dimensions);
+
+            var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+            optionsBuilder.UseSqlite($"Data Source={dbPath}");
+            using var context = new DesignAidDbContext(optionsBuilder.Options);
+
+            var dataDir = CommandHelper.GetDataDirectory();
+            var hnswIndexPath = Path.Combine(dataDir,
+                settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
+            using var vectorService = new VectorSearchService(context, embeddingProvider, hnswIndexPath);
+
+            var pointCount = vectorService.GetPointCountAsync().GetAwaiter().GetResult();
+            if (pointCount == 0)
             {
-                return $"Connected ({host}:{port}) - Collection: {collectionName} (not created)";
+                return "Empty (0 vectors)";
             }
 
-            var pointCount = qdrantService.GetPointCountAsync().GetAwaiter().GetResult();
-            return $"Connected ({host}:{port}) - Collection: {collectionName} ({pointCount} points)";
+            return $"{pointCount} vectors ({dimensions} dimensions)";
         }
         catch (Exception ex)
         {
-            return $"Error ({host}:{port}): {ex.Message}";
+            return $"Error: {ex.Message}";
         }
     }
 

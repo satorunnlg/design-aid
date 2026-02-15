@@ -147,16 +147,6 @@ public class ConnectionException : DesignAidException
     }
 
     /// <summary>
-    /// Qdrant 接続エラーを生成する。
-    /// </summary>
-    /// <param name="host">ホスト</param>
-    /// <param name="port">ポート</param>
-    /// <param name="inner">内部例外</param>
-    /// <returns>ConnectionException</returns>
-    public static ConnectionException QdrantConnectionFailed(string host, int port, Exception? inner = null)
-        => new("Qdrant", $"{host}:{port} への接続に失敗しました", host, port, inner);
-
-    /// <summary>
     /// 埋め込みサービス接続エラーを生成する。
     /// </summary>
     /// <param name="providerName">プロバイダー名</param>

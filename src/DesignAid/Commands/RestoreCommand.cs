@@ -1,14 +1,13 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.IO.Compression;
-using System.Net.Http.Headers;
 using System.Text.Json;
 
 namespace DesignAid.Commands;
 
 /// <summary>
 /// da restore - バックアップからデータを復元する。
-/// ZIP ファイルを展開し、SQLite DB と Qdrant スナップショットを復元する。
+/// ZIP ファイルを展開し、SQLite DB を復元する。
 /// </summary>
 public class RestoreCommand : Command
 {
@@ -26,10 +25,6 @@ public class RestoreCommand : Command
             aliases: ["--profile", "-p"],
             description: "AWS CLI プロファイル名（S3 からダウンロード時）");
 
-        var skipQdrantOption = new Option<bool>(
-            aliases: ["--skip-qdrant"],
-            description: "Qdrant スナップショットの復元をスキップ");
-
         var forceOption = new Option<bool>(
             aliases: ["--force", "-f"],
             description: "既存データを上書きする（確認なし）");
@@ -41,18 +36,16 @@ public class RestoreCommand : Command
         AddArgument(sourceArgument);
         AddOption(dataPathOption);
         AddOption(profileOption);
-        AddOption(skipQdrantOption);
         AddOption(forceOption);
         AddOption(dryRunOption);
 
-        Handler = CommandHandler.Create<string, string?, string?, bool, bool, bool>(ExecuteAsync);
+        Handler = CommandHandler.Create<string, string?, string?, bool, bool>(ExecuteAsync);
     }
 
     private async Task<int> ExecuteAsync(
         string source,
         string? dataPath,
         string? profile,
-        bool skipQdrant,
         bool force,
         bool dryRun)
     {
@@ -105,8 +98,6 @@ public class RestoreCommand : Command
 
                 var hasDb = archive.Entries.Any(e =>
                     e.FullName.Equals("design_aid.db", StringComparison.OrdinalIgnoreCase));
-                var hasQdrantSnapshot = archive.Entries.Any(e =>
-                    e.FullName.StartsWith("qdrant_snapshot/", StringComparison.OrdinalIgnoreCase));
                 var hasConfig = archive.Entries.Any(e =>
                     e.FullName.Equals("config.json", StringComparison.OrdinalIgnoreCase));
                 var hasAssets = archive.Entries.Any(e =>
@@ -115,7 +106,6 @@ public class RestoreCommand : Command
                     e.FullName.StartsWith("components/", StringComparison.OrdinalIgnoreCase));
 
                 Console.WriteLine($"  SQLite DB: {(hasDb ? "あり" : "なし")}");
-                Console.WriteLine($"  Qdrant スナップショット: {(hasQdrantSnapshot ? "あり" : "なし")}");
                 Console.WriteLine($"  config.json: {(hasConfig ? "あり" : "なし")}");
                 Console.WriteLine($"  assets/: {(hasAssets ? "あり" : "なし")}");
                 Console.WriteLine($"  components/: {(hasComponents ? "あり" : "なし")}");
@@ -158,68 +148,14 @@ public class RestoreCommand : Command
                 Console.WriteLine("復元を開始します...");
 
                 // 1. データファイルを展開
-                Console.WriteLine("[1/3] データファイルを展開中...");
-                await ExtractDataFilesAsync(archive, dataDir, skipQdrant);
+                Console.WriteLine("[1/2] データファイルを展開中...");
+                await ExtractDataFilesAsync(archive, dataDir);
                 Console.WriteLine("      完了");
 
-                // 2. Qdrant スナップショットを復元
-                if (hasQdrantSnapshot && !skipQdrant)
-                {
-                    Console.WriteLine("[2/3] Qdrant スナップショットを復元中...");
-
-                    // config.json から Qdrant 設定を読み込み
-                    var configPath = Path.Combine(dataDir, "config.json");
-                    LocalQdrantConfig qdrantConfig = new();
-
-                    if (File.Exists(configPath))
-                    {
-                        var configJson = await File.ReadAllTextAsync(configPath);
-                        var options = new JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-                        };
-                        var config = JsonSerializer.Deserialize<LocalConfig>(configJson, options);
-                        qdrantConfig = config?.Qdrant ?? new LocalQdrantConfig();
-                    }
-
-                    if (qdrantConfig.Enabled)
-                    {
-                        var snapshotDir = Path.Combine(dataDir, "qdrant_snapshot");
-                        var restoreResult = await RestoreQdrantSnapshotAsync(
-                            qdrantConfig.Host,
-                            qdrantConfig.GrpcPort - 1, // HTTP ポート
-                            snapshotDir);
-
-                        if (restoreResult)
-                        {
-                            Console.WriteLine("      完了");
-                        }
-                        else
-                        {
-                            Console.WriteLine("      警告: Qdrant スナップショットの復元に失敗");
-                        }
-
-                        // スナップショットディレクトリを削除
-                        if (Directory.Exists(snapshotDir))
-                        {
-                            Directory.Delete(snapshotDir, true);
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("      スキップ（Qdrant が無効）");
-                    }
-                }
-                else if (skipQdrant)
-                {
-                    Console.WriteLine("[2/3] Qdrant スナップショットをスキップ（--skip-qdrant）");
-                }
-                else
-                {
-                    Console.WriteLine("[2/3] Qdrant スナップショットなし（スキップ）");
-                }
-
-                Console.WriteLine("[3/3] 完了");
+                // 2. ベクトルインデックスの再構築案内
+                Console.WriteLine("[2/2] 完了");
+                Console.WriteLine();
+                Console.WriteLine("注意: ベクトルインデックスは `daid sync --include-vectors` で再構築してください。");
 
                 Console.WriteLine();
                 Console.WriteLine("復元が完了しました。");
@@ -249,18 +185,12 @@ public class RestoreCommand : Command
     /// <summary>
     /// データファイルを展開する。
     /// </summary>
-    private static async Task ExtractDataFilesAsync(ZipArchive archive, string destDir, bool skipQdrant)
+    private static async Task ExtractDataFilesAsync(ZipArchive archive, string destDir)
     {
         Directory.CreateDirectory(destDir);
 
         foreach (var entry in archive.Entries)
         {
-            // Qdrant スナップショットは後で処理
-            if (skipQdrant && entry.FullName.StartsWith("qdrant_snapshot/", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             // 空のディレクトリエントリはスキップ
             if (string.IsNullOrEmpty(entry.Name))
             {
@@ -276,97 +206,6 @@ public class RestoreCommand : Command
             }
 
             await Task.Run(() => entry.ExtractToFile(destPath, overwrite: true));
-        }
-    }
-
-    /// <summary>
-    /// Qdrant スナップショットを復元する。
-    /// </summary>
-    private static async Task<bool> RestoreQdrantSnapshotAsync(
-        string host,
-        int httpPort,
-        string snapshotDir)
-    {
-        try
-        {
-            // メタデータを読み込み
-            var metadataPath = Path.Combine(snapshotDir, "metadata.json");
-            if (!File.Exists(metadataPath))
-            {
-                Console.WriteLine("      メタデータファイルが見つかりません");
-                return false;
-            }
-
-            var metadataJson = await File.ReadAllTextAsync(metadataPath);
-            using var metadata = JsonDocument.Parse(metadataJson);
-            var collectionName = metadata.RootElement.GetProperty("collectionName").GetString();
-            var snapshotName = metadata.RootElement.GetProperty("snapshotName").GetString();
-
-            if (string.IsNullOrEmpty(collectionName) || string.IsNullOrEmpty(snapshotName))
-            {
-                Console.WriteLine("      メタデータが不完全です");
-                return false;
-            }
-
-            // スナップショットファイルを検索
-            var snapshotFiles = Directory.GetFiles(snapshotDir)
-                .Where(f => !f.EndsWith("metadata.json", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (snapshotFiles.Count == 0)
-            {
-                Console.WriteLine("      スナップショットファイルが見つかりません");
-                return false;
-            }
-
-            var snapshotFilePath = snapshotFiles[0];
-
-            using var httpClient = new HttpClient
-            {
-                BaseAddress = new Uri($"http://{host}:{httpPort}"),
-                Timeout = TimeSpan.FromMinutes(10)
-            };
-
-            // 既存のコレクションを削除（存在する場合）
-            try
-            {
-                await httpClient.DeleteAsync($"/collections/{collectionName}");
-            }
-            catch
-            {
-                // コレクションが存在しない場合は無視
-            }
-
-            // スナップショットをアップロードして復元
-            await using var fileStream = File.OpenRead(snapshotFilePath);
-            using var content = new StreamContent(fileStream);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-
-            // Qdrant REST API でスナップショットを復元
-            // POST /collections/{collection_name}/snapshots/upload
-            var response = await httpClient.PutAsync(
-                $"/collections/{collectionName}/snapshots/upload?priority=snapshot",
-                content);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"      復元エラー: {response.StatusCode}");
-                Console.WriteLine($"      {errorContent}");
-                return false;
-            }
-
-            return true;
-        }
-        catch (HttpRequestException ex)
-        {
-            Console.WriteLine($"      Qdrant 接続エラー: {ex.Message}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"      エラー: {ex.Message}");
-            return false;
         }
     }
 

@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.Persistence;
-using DesignAid.Infrastructure.Qdrant;
+using DesignAid.Infrastructure.VectorSearch;
 
 namespace DesignAid.Application.Services;
 
@@ -11,37 +11,37 @@ namespace DesignAid.Application.Services;
 public class SearchService
 {
     private readonly DesignAidDbContext? _context;
-    private readonly QdrantService? _qdrantService;
+    private readonly VectorSearchService? _vectorSearchService;
 
     /// <summary>
     /// SearchService を初期化する。
     /// </summary>
     /// <param name="context">DB コンテキスト（オプション）</param>
-    /// <param name="qdrantService">Qdrant サービス（オプション）</param>
-    public SearchService(DesignAidDbContext? context = null, QdrantService? qdrantService = null)
+    /// <param name="vectorSearchService">ベクトル検索サービス（オプション）</param>
+    public SearchService(DesignAidDbContext? context = null, VectorSearchService? vectorSearchService = null)
     {
         _context = context;
-        _qdrantService = qdrantService;
+        _vectorSearchService = vectorSearchService;
     }
 
     /// <summary>
-    /// Qdrant が利用可能かどうかを確認する。
+    /// ベクトルインデックスが利用可能かどうかを確認する。
     /// </summary>
-    public async Task<bool> IsQdrantAvailableAsync(CancellationToken ct = default)
+    public async Task<bool> IsVectorIndexAvailableAsync(CancellationToken ct = default)
     {
-        if (_qdrantService == null) return false;
-        return await _qdrantService.CheckConnectionAsync(ct);
+        if (_vectorSearchService == null) return false;
+        return await _vectorSearchService.IsAvailableAsync(ct);
     }
 
     /// <summary>
-    /// パーツをベクトルDBに同期する。
+    /// パーツをベクトルインデックスに同期する。
     /// </summary>
     /// <param name="partId">パーツID（nullの場合は全パーツ）</param>
     /// <param name="ct">キャンセルトークン</param>
     /// <returns>同期したパーツ数</returns>
-    public async Task<int> SyncToVectorDbAsync(Guid? partId = null, CancellationToken ct = default)
+    public async Task<int> SyncToVectorIndexAsync(Guid? partId = null, CancellationToken ct = default)
     {
-        if (_context == null || _qdrantService == null)
+        if (_context == null || _vectorSearchService == null)
         {
             return 0;
         }
@@ -75,12 +75,12 @@ public class SearchService
 
             return new DesignKnowledgePoint
             {
-                Id = part.Id, // パーツIDをポイントIDとして使用
+                Id = part.Id,
                 PartId = part.Id,
                 PartNumber = part.PartNumber.Value,
                 AssetId = asset?.Id,
                 AssetName = asset?.Name,
-                ProjectId = null, // Project 概念削除のため
+                ProjectId = null,
                 ProjectName = null,
                 Type = "spec",
                 Content = content,
@@ -88,7 +88,11 @@ public class SearchService
             };
         }).ToList();
 
-        await _qdrantService.UpsertPartsAsync(points, ct);
+        await _vectorSearchService.UpsertPartsAsync(points, ct);
+
+        // HNSW インデックスを再構築
+        await _vectorSearchService.RebuildIndexAsync(ct);
+
         return points.Count;
     }
 
@@ -106,12 +110,12 @@ public class SearchService
         int limit = 10,
         CancellationToken ct = default)
     {
-        if (_qdrantService == null)
+        if (_vectorSearchService == null)
         {
             return new List<SearchResultDto>();
         }
 
-        var results = await _qdrantService.SearchAsync(query, threshold, limit, ct);
+        var results = await _vectorSearchService.SearchAsync(query, threshold, limit, ct);
 
         return results.Select(r => new SearchResultDto
         {
@@ -126,48 +130,38 @@ public class SearchService
     }
 
     /// <summary>
-    /// パーツをベクトルDBから削除する。
+    /// パーツをベクトルインデックスから削除する。
     /// </summary>
-    public async Task RemoveFromVectorDbAsync(Guid partId, CancellationToken ct = default)
+    public async Task RemoveFromVectorIndexAsync(Guid partId, CancellationToken ct = default)
     {
-        if (_qdrantService == null) return;
-        await _qdrantService.DeleteByPartIdAsync(partId, ct);
+        if (_vectorSearchService == null) return;
+        await _vectorSearchService.DeleteByPartIdAsync(partId, ct);
     }
 
     /// <summary>
-    /// ベクトルDBをクリアする。
+    /// ベクトルインデックスをクリアする。
     /// </summary>
-    public async Task ClearVectorDbAsync(CancellationToken ct = default)
+    public async Task ClearVectorIndexAsync(CancellationToken ct = default)
     {
-        if (_qdrantService == null) return;
-        await _qdrantService.ClearCollectionAsync(ct);
+        if (_vectorSearchService == null) return;
+        await _vectorSearchService.ClearAsync(ct);
     }
 
     /// <summary>
-    /// ベクトルDBの統計情報を取得する。
+    /// ベクトルインデックスの統計情報を取得する。
     /// </summary>
-    public async Task<VectorDbStats> GetStatsAsync(CancellationToken ct = default)
+    public async Task<VectorIndexStats> GetStatsAsync(CancellationToken ct = default)
     {
-        if (_qdrantService == null)
+        if (_vectorSearchService == null)
         {
-            return new VectorDbStats { IsAvailable = false };
+            return new VectorIndexStats { IsAvailable = false };
         }
 
-        var isConnected = await _qdrantService.CheckConnectionAsync(ct);
-        if (!isConnected)
-        {
-            return new VectorDbStats { IsAvailable = false };
-        }
+        var pointCount = await _vectorSearchService.GetPointCountAsync(ct);
 
-        var collectionExists = await _qdrantService.CollectionExistsAsync(ct);
-        var pointCount = collectionExists
-            ? await _qdrantService.GetPointCountAsync(ct)
-            : 0;
-
-        return new VectorDbStats
+        return new VectorIndexStats
         {
             IsAvailable = true,
-            CollectionExists = collectionExists,
             PointCount = pointCount
         };
     }
@@ -243,16 +237,13 @@ public class SearchResultDto
 }
 
 /// <summary>
-/// ベクトルDB統計情報。
+/// ベクトルインデックス統計情報。
 /// </summary>
-public class VectorDbStats
+public class VectorIndexStats
 {
     /// <summary>利用可能か</summary>
     public bool IsAvailable { get; set; }
 
-    /// <summary>コレクションが存在するか</summary>
-    public bool CollectionExists { get; set; }
-
-    /// <summary>ポイント数</summary>
-    public ulong PointCount { get; set; }
+    /// <summary>ベクトル数</summary>
+    public long PointCount { get; set; }
 }

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - 2026-02-15
+
+### Changed
+
+- **ベクトル検索を組み込み HNSW に移行**
+  - Qdrant（Docker）依存を完全に除去
+  - SQLite BLOB + HNSW ライブラリによる組み込みベクトル検索に置き換え
+  - Docker / docker-compose.yml が不要に
+  - `daid check` の Qdrant 接続チェックを削除
+
+- **設定値を DB (Settings テーブル) に統合**
+  - `config.json` / `appsettings.json` / 環境変数（`DA_DB_PATH` 等）を廃止
+  - 全設定を SQLite の Settings テーブルに一元管理
+  - ブートストラップは `DA_DATA_DIR` 環境変数（または慣例 `./data`）のみ
+  - 既存の `config.json` は `daid setup` 時に自動で DB に移行
+  - `daid config show/set` が DB ベースで動作
+
+### Removed
+
+- **Qdrant 依存の削除**
+  - `Qdrant.Client` NuGet パッケージを削除
+  - `QdrantService.cs` を削除
+  - `docker-compose.yml` を削除
+  - Qdrant 統合テストを削除
+
+- **旧設定ファイルの廃止**
+  - `appsettings.json` / `appsettings.Development.json` を削除
+  - `Configuration/AppSettings.cs` を削除
+  - `Configuration/DependencyInjection.cs` を削除
+  - `Microsoft.Extensions.Configuration.*` / `DependencyInjection` NuGet パッケージを削除
+
+### Added
+
+- **VectorSearchService（組み込み HNSW）**
+  - SQLite `VectorIndex` テーブルでベクトルデータを永続化
+  - HNSW ライブラリによる近似最近傍探索
+  - `daid sync --include-vectors` でインデックス構築
+  - 外部サービス不要で `daid search` が動作
+
+- **SettingsService**
+  - Settings テーブルの CRUD 操作
+  - 12 個のデフォルト設定値を管理
+  - `config.json` からの自動マイグレーション機能
+  - 型付きゲッター（Get / GetBool / GetInt）
+
 ## [0.1.6-alpha] - 2026-02-07
 
 ### Fixed
@@ -103,9 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **言語**: C# 13 / .NET 10.0
 - **CLI フレームワーク**: System.CommandLine 2.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
-- **Vector DB**: Qdrant 1.x（オプション）
+- **Vector Search**: 組み込み HNSW（SQLite BLOB + HNSW ライブラリ）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.2.0-alpha...HEAD
+[0.2.0-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...v0.2.0-alpha
 [0.1.6-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.5-alpha...v0.1.6-alpha
 [0.1.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.0-alpha...v0.1.3-alpha
 [0.1.0-alpha]: https://github.com/satorunnlg/design-aid/releases/tag/v0.1.0-alpha

@@ -1,4 +1,6 @@
-using System.Text.Json;
+using DesignAid.Application.Services;
+using DesignAid.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands;
 
@@ -12,19 +14,7 @@ public static class CommandHelper
     /// </summary>
     public static string GetAssetsDirectory()
     {
-        var dataDir = Environment.GetEnvironmentVariable("DA_DATA_DIR");
-        if (!string.IsNullOrEmpty(dataDir))
-            return Path.Combine(dataDir, "assets");
-
-        var currentDir = Directory.GetCurrentDirectory();
-        var dir = currentDir;
-        while (dir != null)
-        {
-            if (IsRepositoryRoot(dir))
-                return Path.Combine(dir, "data", "assets");
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        return Path.Combine(currentDir, "data", "assets");
+        return Path.Combine(GetDataDirectory(), "assets");
     }
 
     /// <summary>
@@ -32,23 +22,12 @@ public static class CommandHelper
     /// </summary>
     public static string GetComponentsDirectory()
     {
-        var dataDir = Environment.GetEnvironmentVariable("DA_DATA_DIR");
-        if (!string.IsNullOrEmpty(dataDir))
-            return Path.Combine(dataDir, "components");
-
-        var currentDir = Directory.GetCurrentDirectory();
-        var dir = currentDir;
-        while (dir != null)
-        {
-            if (IsRepositoryRoot(dir))
-                return Path.Combine(dir, "data", "components");
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        return Path.Combine(currentDir, "data", "components");
+        return Path.Combine(GetDataDirectory(), "components");
     }
 
     /// <summary>
     /// データディレクトリのパスを取得する。
+    /// ブートストラップ: DA_DATA_DIR 環境変数 → リポジトリルートの data/ → カレントの data/
     /// </summary>
     public static string GetDataDirectory()
     {
@@ -78,13 +57,10 @@ public static class CommandHelper
 
     /// <summary>
     /// データベースファイルのパスを取得する。
+    /// DB ファイル名は design_aid.db 固定。
     /// </summary>
     public static string GetDatabasePath()
     {
-        var dbPath = Environment.GetEnvironmentVariable("DA_DB_PATH");
-        if (!string.IsNullOrEmpty(dbPath))
-            return dbPath;
-
         return Path.Combine(GetDataDirectory(), "design_aid.db");
     }
 
@@ -105,45 +81,20 @@ public static class CommandHelper
     }
 
     /// <summary>
-    /// config.json から Qdrant 設定を取得する。
-    /// 環境変数でホスト・ポートをオーバーライド可能。
+    /// DB から SettingsService をロードして返す。
+    /// DB が存在しない場合はデフォルト値のみを持つインスタンスを返す。
     /// </summary>
-    public static (string host, int port, string collectionName) GetQdrantConfig()
+    public static SettingsService LoadSettings()
     {
-        var host = Environment.GetEnvironmentVariable("DA_QDRANT_HOST") ?? "localhost";
-        var portStr = Environment.GetEnvironmentVariable("DA_QDRANT_GRPC_PORT")
-                      ?? Environment.GetEnvironmentVariable("DA_QDRANT_PORT");
-        var port = int.TryParse(portStr, out var p) ? p : 6334;
-        var collectionName = "design_knowledge";
-
-        // config.json からコレクション名を読み取る
-        var configPath = Path.Combine(GetDataDirectory(), "config.json");
-        if (File.Exists(configPath))
+        var dbPath = GetDatabasePath();
+        var service = new SettingsService();
+        if (File.Exists(dbPath))
         {
-            try
-            {
-                var json = File.ReadAllText(configPath);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("qdrant", out var qdrant))
-                {
-                    if (qdrant.TryGetProperty("collection_name", out var cn))
-                        collectionName = cn.GetString() ?? collectionName;
-
-                    // config.json のホスト・ポートも環境変数がなければ使用
-                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DA_QDRANT_HOST"))
-                        && qdrant.TryGetProperty("host", out var h))
-                        host = h.GetString() ?? host;
-
-                    if (portStr == null && qdrant.TryGetProperty("grpc_port", out var gp))
-                        port = gp.GetInt32();
-                }
-            }
-            catch
-            {
-                // config.json の読み取り失敗時はデフォルト値を使用
-            }
+            var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+            optionsBuilder.UseSqlite($"Data Source={dbPath}");
+            using var context = new DesignAidDbContext(optionsBuilder.Options);
+            service.LoadAsync(context).GetAwaiter().GetResult();
         }
-
-        return (host, port, collectionName);
+        return service;
     }
 }

@@ -52,7 +52,8 @@ daid setup
 # - data/ ディレクトリが作成される
 # - data/assets/ ディレクトリが作成される
 # - data/components/ ディレクトリが作成される
-# - data/config.json が作成される
+# - data/design_aid.db が作成される（マイグレーション適用）
+# - Settings テーブルにデフォルト設定が書き込まれる
 # - data/.gitignore が作成される
 ```
 
@@ -71,13 +72,13 @@ daid config path
 ### 1.4 設定の変更
 
 ```bash
-# Qdrant を無効化（ローカルテスト用）
-daid config set qdrant.enabled false
-
-# 設定を確認
+# ベクトル検索の有効/無効を確認
 daid config show
 
-# 期待結果: qdrant.enabled が false になっている
+# 設定を変更する場合
+daid config set vector_search.enabled true
+
+# 期待結果: vector_search.enabled が true になっている
 ```
 
 ---
@@ -227,7 +228,7 @@ daid status
 # 期待結果: システム全体のステータスが表示される
 # - 装置数、パーツ数
 # - DB 接続状態
-# - Qdrant 接続状態（無効の場合は Disabled）
+# - ベクトルインデックス状態
 ```
 
 ### 4.2 整合性チェック
@@ -259,13 +260,32 @@ daid verify
 
 ## Phase 5: 検索
 
-### 5.1 キーワード検索
+### 5.1 ベクトルインデックスの構築
 
 ```bash
-# Qdrant が無効なので、この機能は制限される
+# ベクトルインデックスを構築
+daid sync --include-vectors
+
+# 期待結果: ベクトルインデックスが構築される（同期件数が表示される）
+```
+
+### 5.2 類似設計検索
+
+```bash
+# ベクトル検索（インデックス構築後）
 daid search "ベースプレート"
 
-# 期待結果: Qdrant 無効のメッセージまたは検索結果
+# 期待結果: 類似パーツの検索結果が表示される
+# - ベクトルインデックスが空の場合はローカルキーワード検索にフォールバック
+```
+
+### 5.3 ローカルキーワード検索
+
+```bash
+# --local オプションでキーワード検索
+daid search "モーター" --local
+
+# 期待結果: ローカルキーワード検索の結果が表示される
 ```
 
 ---
@@ -564,7 +584,8 @@ ls -la data/ 2>&1 || echo "data directory removed successfully"
 
 ## 備考
 
-- Qdrant を使用する機能（search）は、Qdrant が起動していない場合はスキップまたはエラーになります
+- ベクトル検索は SQLite + HNSW で組み込み実装されており、外部サービス（Docker 等）は不要です
+- ベクトル検索を利用するには `daid sync --include-vectors` でインデックスを構築してください
 - AWS S3 バックアップは AWS CLI/プロファイルが設定されていない場合はスキップしてください
 - 各コマンドのヘルプは `--help` オプションで確認できます
 - 削除コマンド（asset remove, part remove）は確認プロンプトが表示されます

@@ -1,8 +1,8 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using DesignAid.Configuration;
+using DesignAid.Application.Services;
+using DesignAid.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands;
 
@@ -60,60 +60,6 @@ public class SetupCommand : Command
                 }
             }
 
-            // config.json の作成
-            var configPath = Path.Combine(dataDir, "config.json");
-            if (!File.Exists(configPath) || force)
-            {
-                // データディレクトリ名からユニークなコレクション名を生成
-                var dirName = new DirectoryInfo(dataDir).Name;
-                var collectionSuffix = dirName.ToLowerInvariant()
-                    .Replace(" ", "_")
-                    .Replace("-", "_");
-                // Qdrant コレクション名に使用できない文字を除去
-                collectionSuffix = System.Text.RegularExpressions.Regex.Replace(
-                    collectionSuffix, @"[^a-z0-9_]", "");
-                var collectionName = $"design_knowledge_{collectionSuffix}";
-
-                var config = new LocalConfig
-                {
-                    Database = new LocalDatabaseConfig { Path = "design_aid.db" },
-                    Qdrant = new LocalQdrantConfig
-                    {
-                        Host = "localhost",
-                        GrpcPort = 6334,
-                        Enabled = true,
-                        CollectionName = collectionName
-                    },
-                    Embedding = new LocalEmbeddingConfig
-                    {
-                        Provider = "Mock",
-                        Dimensions = 384
-                    },
-                    Backup = new LocalBackupConfig
-                    {
-                        S3Bucket = "",
-                        S3Prefix = "design-aid-backup/",
-                        AwsProfile = "default"
-                    }
-                };
-
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-                };
-
-                var json = JsonSerializer.Serialize(config, options);
-                await File.WriteAllTextAsync(configPath, json);
-
-                Console.WriteLine($"  [作成] config.json");
-            }
-            else
-            {
-                Console.WriteLine($"  [存在] config.json（--force で上書き可能）");
-            }
-
             // .gitignore の作成（DB ファイルを除外）
             var gitignorePath = Path.Combine(dataDir, ".gitignore");
             if (!File.Exists(gitignorePath) || force)
@@ -125,6 +71,10 @@ public class SetupCommand : Command
                     *.db
                     *.db-shm
                     *.db-wal
+
+                    # HNSW インデックスキャッシュ（再構築可能）
+                    hnsw_index.bin
+                    *.hnsw
 
                     # バックアップファイル
                     *.zip
@@ -142,13 +92,54 @@ public class SetupCommand : Command
                 Console.WriteLine($"  [存在] .gitignore");
             }
 
+            // SQLite データベースの初期化（マイグレーション適用）
+            var dbPath = Path.Combine(dataDir, "design_aid.db");
+            try
+            {
+                var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+                optionsBuilder.UseSqlite($"Data Source={dbPath}");
+                using var context = new DesignAidDbContext(optionsBuilder.Options);
+                context.Database.Migrate();
+                Console.WriteLine($"  [作成] design_aid.db（マイグレーション適用）");
+
+                // 既存の config.json があれば Settings テーブルに移行
+                var configJsonPath = Path.Combine(dataDir, "config.json");
+                if (File.Exists(configJsonPath))
+                {
+                    var settingsService = new SettingsService();
+                    await settingsService.MigrateFromConfigJsonAsync(context, configJsonPath);
+                    Console.WriteLine($"  [移行] config.json → Settings テーブル");
+                }
+
+                // デフォルト設定を書き込み（存在しないキーのみ）
+                var settings = new SettingsService();
+                await settings.SetDefaultsAsync(context);
+
+                if (force)
+                {
+                    // --force の場合はデフォルト値で上書き
+                    foreach (var (key, defaultValue) in SettingsService.Defaults)
+                    {
+                        if (defaultValue != null)
+                        {
+                            await settings.SetAsync(context, key, defaultValue);
+                        }
+                    }
+                }
+
+                Console.WriteLine($"  [作成] デフォルト設定（Settings テーブル）");
+            }
+            catch (Exception dbEx)
+            {
+                Console.WriteLine($"  [警告] データベースの初期化に失敗しました: {dbEx.Message}");
+            }
+
             Console.WriteLine();
             Console.WriteLine("初期化が完了しました。");
             Console.WriteLine();
             Console.WriteLine("次のステップ:");
-            Console.WriteLine($"  1. config.json を編集して設定を調整");
-            Console.WriteLine($"  2. Qdrant を起動: docker compose up -d");
-            Console.WriteLine($"  3. 装置を追加: da asset add <name>");
+            Console.WriteLine($"  1. daid config set <key> <value> で設定を調整");
+            Console.WriteLine($"  2. 装置を追加: daid asset add <name>");
 
             return 0;
         }
@@ -158,73 +149,4 @@ public class SetupCommand : Command
             return 1;
         }
     }
-}
-
-/// <summary>
-/// ローカル設定ファイル (config.json) の構造。
-/// </summary>
-public class LocalConfig
-{
-    [JsonPropertyName("database")]
-    public LocalDatabaseConfig Database { get; set; } = new();
-
-    [JsonPropertyName("qdrant")]
-    public LocalQdrantConfig Qdrant { get; set; } = new();
-
-    [JsonPropertyName("embedding")]
-    public LocalEmbeddingConfig Embedding { get; set; } = new();
-
-    [JsonPropertyName("backup")]
-    public LocalBackupConfig Backup { get; set; } = new();
-}
-
-public class LocalDatabaseConfig
-{
-    [JsonPropertyName("path")]
-    public string Path { get; set; } = "design_aid.db";
-}
-
-public class LocalQdrantConfig
-{
-    [JsonPropertyName("host")]
-    public string Host { get; set; } = "localhost";
-
-    [JsonPropertyName("grpc_port")]
-    public int GrpcPort { get; set; } = 6334;
-
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; set; } = true;
-
-    [JsonPropertyName("collection_name")]
-    public string CollectionName { get; set; } = "design_knowledge";
-}
-
-public class LocalEmbeddingConfig
-{
-    [JsonPropertyName("provider")]
-    public string Provider { get; set; } = "Mock";
-
-    [JsonPropertyName("dimensions")]
-    public int Dimensions { get; set; } = 384;
-
-    [JsonPropertyName("api_key")]
-    public string? ApiKey { get; set; }
-
-    [JsonPropertyName("endpoint")]
-    public string? Endpoint { get; set; }
-
-    [JsonPropertyName("model")]
-    public string? Model { get; set; }
-}
-
-public class LocalBackupConfig
-{
-    [JsonPropertyName("s3_bucket")]
-    public string S3Bucket { get; set; } = "";
-
-    [JsonPropertyName("s3_prefix")]
-    public string S3Prefix { get; set; } = "design-aid-backup/";
-
-    [JsonPropertyName("aws_profile")]
-    public string AwsProfile { get; set; } = "default";
 }

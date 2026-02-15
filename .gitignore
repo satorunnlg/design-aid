@@ -60,6 +60,10 @@ artifacts/
 *.db-wal
 design_aid.db
 
+# HNSW index cache (再構築可能)
+hnsw_index.bin
+*.hnsw
+
 # Environment and secrets
 .env
 .env.*
@@ -68,7 +72,7 @@ appsettings.*.json
 !appsettings.json
 !appsettings.Development.json.example
 
-# Docker
+# Docker (将来 GUI 等で使用する場合)
 docker-compose.override.yml
 
 # OS generated files

@@ -25,7 +25,7 @@ public class SyncServiceTests : IDisposable
         _context = new DesignAidDbContext(options);
         _hashService = new HashService();
 
-        // Qdrant なしでテスト
+        // VectorSearchService なしでテスト
         _service = new SyncService(_context, _hashService, null);
 
         // テスト用一時ディレクトリ
@@ -264,7 +264,7 @@ public class SyncServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SyncToVectorDbAsync_NoQdrant_ReturnsZero()
+    public async Task SyncToVectorIndexAsync_NoVectorService_ReturnsZero()
     {
         // Arrange
         var partDir = Path.Combine(_tempDir, "VECTOR-001");
@@ -274,10 +274,10 @@ public class SyncServiceTests : IDisposable
         _context.Parts.Add(part);
         await _context.SaveChangesAsync();
 
-        // Act - Qdrant なしなのでスキップされる
-        var count = await _service.SyncToVectorDbAsync();
+        // Act - VectorSearchService なしなのでスキップされる
+        var count = await _service.SyncToVectorIndexAsync();
 
-        // Assert - Qdrant がないので 0
+        // Assert - VectorSearchService がないので 0
         Assert.Equal(0, count);
     }
 }

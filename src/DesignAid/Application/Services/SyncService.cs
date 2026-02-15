@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using DesignAid.Domain.Entities;
 using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.Persistence;
-using DesignAid.Infrastructure.Qdrant;
+using DesignAid.Infrastructure.VectorSearch;
 
 namespace DesignAid.Application.Services;
 
@@ -13,7 +13,7 @@ public class SyncService
 {
     private readonly DesignAidDbContext _context;
     private readonly HashService _hashService;
-    private readonly QdrantService? _qdrantService;
+    private readonly VectorSearchService? _vectorSearchService;
 
     /// <summary>
     /// SyncService を初期化する。
@@ -21,11 +21,11 @@ public class SyncService
     public SyncService(
         DesignAidDbContext context,
         HashService hashService,
-        QdrantService? qdrantService = null)
+        VectorSearchService? vectorSearchService = null)
     {
         _context = context;
         _hashService = hashService;
-        _qdrantService = qdrantService;
+        _vectorSearchService = vectorSearchService;
     }
 
     /// <summary>
@@ -49,9 +49,9 @@ public class SyncService
             result.Merge(partResult);
         }
 
-        if (includeVectors && _qdrantService != null)
+        if (includeVectors && _vectorSearchService != null)
         {
-            result.VectorSyncCount = await SyncToVectorDbAsync(ct);
+            result.VectorSyncCount = await SyncToVectorIndexAsync(ct);
         }
 
         return result;
@@ -138,11 +138,11 @@ public class SyncService
     }
 
     /// <summary>
-    /// ベクトルDBにパーツを同期する。
+    /// ベクトルインデックスにパーツを同期する。
     /// </summary>
-    public async Task<int> SyncToVectorDbAsync(CancellationToken ct = default)
+    public async Task<int> SyncToVectorIndexAsync(CancellationToken ct = default)
     {
-        if (_qdrantService == null)
+        if (_vectorSearchService == null)
         {
             return 0;
         }
@@ -171,7 +171,7 @@ public class SyncService
                 PartNumber = part.PartNumber.Value,
                 AssetId = asset?.Id,
                 AssetName = asset?.Name,
-                ProjectId = null, // Project 概念削除のため
+                ProjectId = null,
                 ProjectName = null,
                 Type = "spec",
                 Content = content,
@@ -179,7 +179,11 @@ public class SyncService
             };
         }).ToList();
 
-        await _qdrantService.UpsertPartsAsync(points, ct);
+        await _vectorSearchService.UpsertPartsAsync(points, ct);
+
+        // HNSW インデックスを再構築
+        await _vectorSearchService.RebuildIndexAsync(ct);
+
         return points.Count;
     }
 

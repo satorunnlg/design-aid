@@ -60,10 +60,15 @@ Scope: This folder only.
 - Report design-code inconsistencies before proceeding
 - For ambiguous specs, propose DESIGN.md updates first
 
-### 5. Completion Verification
-Run these if applicable (per DESIGN.md instructions):
-- **Build**: Execute build command defined in DESIGN.md, verify success, report warnings
-- **Test**: Run all tests defined in DESIGN.md, verify pass, report results (pass/fail count)
+### 5. Completion Verification (CRITICAL)
+
+機能実装・変更の完了時に、以下を**必ず**すべて実行すること：
+
+- **Build**: `dotnet build` を実行し、警告・エラーが 0 であることを確認
+- **Unit Test**: `dotnet test` を実行し、全テストがパスすることを確認（pass/fail 数を報告）
+- **CLI Integration Test**: `docs/TEST_SCENARIO.md` に定義された全テストシナリオ（Phase 1〜11）を実行し、各フェーズの結果を報告
+  - テストシナリオは空の data ディレクトリから開始し、全操作を実行後、再び空の data ディレクトリに戻ることを検証
+  - 失敗したフェーズがある場合は、修正してから再実行
 - **Review**: DESIGN.md updated, change rationale documented
 
 **Resource Cleanup**:
@@ -138,33 +143,23 @@ If not defined, use standard development practices with these minimums:
 - マイグレーションファイルはリポジトリに含める
 - 破壊的変更時はデータ移行スクリプトを作成
 
-## Qdrant Rules (MANDATORY)
+## Vector Search Rules (MANDATORY)
 
-### 連携方針
-- Qdrant は必須コンポーネント
-- `Qdrant.Client` NuGet パッケージを使用
-- Docker Compose で Qdrant を起動
-
-### 接続設定
-- デフォルト: `localhost:6333`
-- 設定ファイルで変更可能
-- 起動チェック: `daid check` で Qdrant 接続を検証
+### アーキテクチャ
+- SQLite BLOB によるベクトル永続化 + HNSW ライブラリによるインメモリ ANN 検索
+- 外部依存（Docker / Qdrant）は不要
+- `HNSW` NuGet パッケージ (curiosity-ai) を使用
 
 ### ベクトル管理
-- コレクション名: `design_knowledge`（または用途別に分離）
-- 埋め込みモデル: 設定で指定可能
+- VectorIndex テーブル（SQLite）にベクトルを BLOB として保存
+- HNSW インデックスファイル (`hnsw_index.bin`) はキャッシュ（再構築可能）
+- 埋め込みモデル: OpenAI text-embedding-ada-002 (1536次元) をデフォルト想定
 - メタデータ: `part_id`, `asset_id`, `type` 等を付与
 
-## Docker Rules (MANDATORY)
-
-### 開発環境
-- Qdrant は Docker Compose で起動
-- `docker-compose.yml` をプロジェクトルートに配置
-- `docker compose up -d` で起動
-
-### ヘルスチェック
-- `daid check` コマンドで依存サービスの状態を確認
-- Qdrant 未起動時は適切なエラーメッセージを表示
+### インデックス管理
+- `daid sync --include-vectors` でベクトルインデックスを構築・再構築
+- HNSW パラメータ: M=16, 距離関数=CosineDistance.SIMDForUnits
+- インデックスファイルは .gitignore に含める（再構築可能なため）
 
 ## 設計哲学の遵守 (CRITICAL)
 
