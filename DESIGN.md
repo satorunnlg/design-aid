@@ -116,11 +116,14 @@ design-aid/
 │       │   │   ├── AssetAddCommand.cs
 │       │   │   ├── AssetListCommand.cs
 │       │   │   ├── AssetRemoveCommand.cs
-│       │   │   └── AssetLinkCommand.cs    # 子装置組み込み
+│       │   │   ├── AssetLinkCommand.cs    # 子装置組み込み
+│       │   │   ├── AssetUpdateCommand.cs  # 装置情報更新
+│       │   │   └── AssetBomCommand.cs     # BOM 原価集計
 │       │   ├── Part/                      # パーツ管理
 │       │   │   ├── PartAddCommand.cs
 │       │   │   ├── PartListCommand.cs
-│       │   │   └── PartLinkCommand.cs     # 装置へパーツ紐づけ
+│       │   │   ├── PartLinkCommand.cs     # 装置へパーツ紐づけ
+│       │   │   └── PartUpdateCommand.cs   # パーツ情報更新
 │       │   ├── CheckCommand.cs            # daid check
 │       │   ├── VerifyCommand.cs           # daid verify
 │       │   ├── SyncCommand.cs             # daid sync
@@ -824,12 +827,16 @@ daid asset list --verbose                      # 装置一覧（詳細表示）
 daid asset remove <name>                       # 装置を削除
 daid asset link <parent> --child <child>       # 子装置を組み込み（SubAsset）
 daid asset unlink <parent> --child <child>     # 子装置リンクを解除
+daid asset update <name>                       # 装置情報を更新
+daid asset bom <name>                          # BOM（部品表）と原価集計
 
 # パーツ管理
 daid part add <part-number>                    # パーツを追加（git init 付き）
 daid part add <part-number> --no-git           # パーツを追加（git init なし）
+daid part add <part-number> --price 1500 --currency JPY  # 単価付きで追加（Purchased のみ）
 daid part list                                 # パーツ一覧
 daid part link <part-number> --asset <asset>   # 装置にパーツを紐づけ
+daid part update <part-number>                 # パーツ情報を更新
 daid part remove <part-number>                 # パーツを削除
 
 # 整合性・検証
@@ -949,6 +956,28 @@ daid asset link lifting-unit --child safety-module --quantity 2 --notes "冗長�
 Child asset linked: safety-module to lifting-unit
   Quantity: 2
   Notes: 冗長構成
+```
+
+### daid asset update
+
+装置の表示名や説明を更新する。ファイルシステム（asset.json）のみ更新する。
+
+```bash
+# 表示名を更新
+daid asset update lifting-unit --display-name "昇降ユニット Rev.2"
+
+# 説明を更新
+daid asset update lifting-unit --description "メインの昇降装置"
+
+# 両方を同時更新
+daid asset update lifting-unit --display-name "昇降ユニット Rev.2" --description "メインの昇降装置"
+```
+
+**出力例:**
+```
+Asset updated: lifting-unit
+  DisplayName: 昇降ユニット Rev.2
+  Description: メインの昇降装置
 ```
 
 ### daid asset unlink
@@ -1298,8 +1327,8 @@ daid dashboard stop
 | パス | 画面名 | 主要機能 |
 |------|--------|---------|
 | `/` | ダッシュボード | 装置数・パーツ数・ステータス集計・最近の更新 |
-| `/parts` | パーツ一覧 | フィルター（種別・ステータス・テキスト検索） |
-| `/assets` | 装置一覧 | カード形式一覧、詳細表示（パーツ展開） |
+| `/parts` | パーツ一覧 | フィルター（種別・ステータス・テキスト検索）、インライン編集（名前・メモ） |
+| `/assets` | 装置一覧 | カード形式一覧、詳細表示（パーツ展開）、インライン編集（表示名・説明） |
 | `/check` | 整合性チェック | ハッシュ整合性チェック実行・結果表示 |
 | `/search` | 類似検索 | ベクトル検索（要 `daid sync --include-vectors`） |
 
@@ -1840,6 +1869,8 @@ DesignAid.Configuration             # 設定
 |------|-----------|---------|------|
 | | 0.1.0 | 初版作成 | - |
 | 2026-02-15 | - | ベクトル検索を Qdrant から SQLite+HNSW に移行（Docker 依存解消） | - |
+| 2026-02-18 | - | バグ修正（search --local 重複キー、archive Windows 対応）、`daid part update` / `daid asset bom` コマンド追加、パーツ価格管理 CLI 公開 | - |
+| 2026-02-18 | - | `daid asset update` コマンド追加、ダッシュボード編集機能（装置・パーツのインライン編集 UI）、ダッシュボード CSS/レイアウト修正（ダークテーマ対応） | - |
 
 ## 備考
 
@@ -1857,6 +1888,21 @@ DesignAid.Configuration             # 設定
 - [ ] Excel 帳票自動生成
 - [ ] 3D CAD 対応（STEP/IGES）
 - [ ] チーム共有機能（サーバー版）
+- [ ] asset 文書のベクトルインデックス登録（`daid sync --include-vectors` は parts のみ対象。asset の DESIGN.md / CLAUDE.md をベクトル化して `daid search` で検索可能にする。アーカイブ済み asset も含めて文書内容で類似プロジェクトを検索できるようにする）
+- [x] ~~`daid search --local` の重複キーバグ修正~~ → 2026-02-18 修正済み（Dictionary → List<(string,double)> に変更）
+- [x] ~~`daid archive asset` の Windows 対応改善~~ → 2026-02-18 修正済み（ForceDeleteDirectory で ReadOnly 属性解除後に削除）
+- [x] ~~パーツ価格管理の CLI 公開~~ → 2026-02-18 実装済み（`daid part add --price --currency` / `daid part update` コマンド追加）
+- [x] ~~**BOM 原価集計**~~ → 2026-02-18 実装済み（`daid asset bom <name> [--json] [--export csv] [--include-subassets]`）
+
+#### 検討中の案（要設計）
+
+以下は Works Hub 運用で有用と思われるが、git 連携や使い分けパターンの設計が必要なため未着手。
+
+- **asset メタデータ拡充**: status（active/dormant/archived/third-party）、language、tags 等を管理し、`daid asset list` でフィルタリング・ソート可能にする
+- **git 連携による活性度自動検出**: `daid sync` 時に `.git` の最終コミット日を自動収集し、`daid asset list --inactive-since 2025-01` 等で休止プロジェクトを特定
+- **バッチ操作**: `daid archive asset --all-dormant` 等の一括アーカイブ。リストファイル指定にも対応
+- **プロジェクト分析**: `daid asset analyze <name>` で設定ファイルから言語・フレームワークを自動検出し、テンプレートとの不一致を検出
+- **part 重複検出**: `daid check --duplicates` で同一 part_number の重複エントリを検出・統合
 
 ### MCP サーバー設計検討（2026-02-06 調査）
 

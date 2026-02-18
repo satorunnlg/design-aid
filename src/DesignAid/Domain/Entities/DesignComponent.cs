@@ -140,6 +140,18 @@ public abstract class DesignComponent
     }
 
     /// <summary>
+    /// 名称を更新する。
+    /// </summary>
+    public void UpdateName(string newName)
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+            throw new ArgumentException("名称は必須です", nameof(newName));
+
+        Name = newName;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
     /// part.json ファイルのパスを取得する。
     /// </summary>
     public string GetPartJsonPath() => Path.Combine(DirectoryPath, "part.json");

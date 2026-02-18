@@ -256,12 +256,13 @@ public class SearchCommand : Command
         var matchCount = 0;
         var totalWeight = 0.0;
 
-        var searchableTexts = new Dictionary<string, double>
+        // Dictionary ではなく List を使用（PartNumber と Name が同一値の場合のキー重複を回避）
+        var searchableTexts = new List<(string Text, double Weight)>
         {
-            { partJson.PartNumber.ToLowerInvariant(), 1.0 },
-            { partJson.Name.ToLowerInvariant(), 1.0 },
-            { partJson.Type.ToLowerInvariant(), 0.5 },
-            { partJson.Memo?.ToLowerInvariant() ?? "", 0.8 }
+            (partJson.PartNumber.ToLowerInvariant(), 1.0),
+            (partJson.Name.ToLowerInvariant(), 1.0),
+            (partJson.Type.ToLowerInvariant(), 0.5),
+            (partJson.Memo?.ToLowerInvariant() ?? "", 0.8)
         };
 
         // メタデータも検索対象に追加
@@ -269,7 +270,7 @@ public class SearchCommand : Command
         {
             foreach (var kv in partJson.Metadata)
             {
-                searchableTexts[$"{kv.Key}: {kv.Value}".ToLowerInvariant()] = 0.6;
+                searchableTexts.Add(($"{kv.Key}: {kv.Value}".ToLowerInvariant(), 0.6));
             }
         }
 

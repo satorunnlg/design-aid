@@ -1,6 +1,7 @@
 @page "/parts"
 @page "/parts/{PartNumber}"
 @inject DashboardService DashboardService
+@inject ISnackbar Snackbar
 
 <PageTitle>パーツ一覧 - Design Aid</PageTitle>
 
@@ -50,13 +51,14 @@ else
                 <th>種別</th>
                 <th>ステータス</th>
                 <th>更新日時</th>
+                <th style="width: 48px;"></th>
             </tr>
         </thead>
         <tbody>
             @if (_parts.Count == 0)
             {
                 <tr>
-                    <td colspan="5" style="text-align: center;">
+                    <td colspan="6" style="text-align: center;">
                         <MudText Typo="Typo.body2" Color="Color.Secondary">
                             該当するパーツがありません
                         </MudText>
@@ -78,6 +80,13 @@ else
                             </MudChip>
                         </td>
                         <td>@part.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                           Size="Size.Small"
+                                           Color="Color.Primary"
+                                           OnClick="() => OpenEditDialog(part)"
+                                           aria-label="パーツ情報を編集" />
+                        </td>
                     </tr>
                 }
             }
@@ -89,6 +98,29 @@ else
     </MudText>
 }
 
+@* パーツ編集ダイアログ *@
+<MudDialog @bind-Visible="_editDialogVisible" Options="_editDialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">パーツ情報の編集</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField Value="@_editingPart?.PartNumber" Label="型式" ReadOnly="true" Class="mb-3" />
+        <MudTextField @bind-Value="_editName" Label="名称" Class="mb-3" />
+        <MudTextField @bind-Value="_editMemo" Label="メモ" Lines="3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseEditDialog">キャンセル</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SavePartAsync" Disabled="_saving">
+            @if (_saving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            保存
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
 @code {
     [Parameter] public string? PartNumber { get; set; }
 
@@ -97,6 +129,18 @@ else
     private string? _searchText;
     private PartType? _typeFilter;
     private HandoverStatus? _statusFilter;
+
+    // 編集ダイアログ
+    private bool _editDialogVisible;
+    private PartSummaryItem? _editingPart;
+    private string _editName = "";
+    private string _editMemo = "";
+    private bool _saving;
+    private readonly DialogOptions _editDialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -133,6 +177,54 @@ else
     {
         _statusFilter = value;
         await LoadPartsAsync();
+    }
+
+    private void OpenEditDialog(PartSummaryItem part)
+    {
+        _editingPart = part;
+        _editName = part.Name;
+        _editMemo = part.Memo ?? "";
+        _editDialogVisible = true;
+    }
+
+    private void CloseEditDialog()
+    {
+        _editDialogVisible = false;
+        _editingPart = null;
+    }
+
+    private async Task SavePartAsync()
+    {
+        if (_editingPart is null) return;
+
+        _saving = true;
+        try
+        {
+            var success = await DashboardService.UpdatePartAsync(
+                _editingPart.Id,
+                _editName,
+                _editMemo);
+
+            if (success)
+            {
+                Snackbar.Add("パーツ情報を更新しました", Severity.Success);
+                _editDialogVisible = false;
+                _editingPart = null;
+                await LoadPartsAsync();
+            }
+            else
+            {
+                Snackbar.Add("パーツが見つかりません", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"更新に失敗しました: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private static Color GetStatusColor(string status) => status switch

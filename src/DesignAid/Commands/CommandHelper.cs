@@ -159,4 +159,23 @@ public static class CommandHelper
     {
         return Path.Combine(GetDataDirectory()!, ".dashboard.pid");
     }
+
+    /// <summary>
+    /// 読み取り専用属性を解除してからディレクトリを再帰削除する。
+    /// Windows 上の git オブジェクトファイル（ReadOnly 属性）対策。
+    /// </summary>
+    public static void ForceDeleteDirectory(string path)
+    {
+        var dirInfo = new DirectoryInfo(path);
+        if (!dirInfo.Exists) return;
+
+        foreach (var file in dirInfo.EnumerateFiles("*", SearchOption.AllDirectories))
+        {
+            if (file.Attributes.HasFlag(FileAttributes.ReadOnly))
+            {
+                file.Attributes = FileAttributes.Normal;
+            }
+        }
+        dirInfo.Delete(true);
+    }
 }
