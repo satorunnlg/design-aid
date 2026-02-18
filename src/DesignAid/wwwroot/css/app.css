@@ -2,6 +2,46 @@
 
 html, body {
     font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    /* MudBlazor ダークテーマのデフォルト背景色 */
+    background-color: var(--mud-palette-background, #121212);
+    color: var(--mud-palette-text-primary, #ffffffb3);
+}
+
+/* スクロールバーのダークテーマ対応 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--mud-palette-background, #121212);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--mud-palette-lines-default, #555);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--mud-palette-text-secondary, #888);
+}
+
+/* テーブルのレスポンシブ対応 */
+.mud-simple-table {
+    overflow-x: auto;
+}
+
+/* カードの最小高さ統一 */
+.mud-card {
+    height: 100%;
+}
+
+/* MudGrid 内のカードは高さを自動に */
+.mud-grid-item > .mud-card {
+    height: auto;
 }
 
 /* Blazor エラーUI */
@@ -15,6 +55,7 @@ html, body {
     position: fixed;
     width: 100%;
     z-index: 1000;
+    color: #333;
 }
 
 #blazor-error-ui .dismiss {

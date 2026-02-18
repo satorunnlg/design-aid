@@ -1,5 +1,6 @@
 @page "/assets"
 @inject DashboardService DashboardService
+@inject ISnackbar Snackbar
 
 <PageTitle>装置一覧 - Design Aid</PageTitle>
 
@@ -19,7 +20,15 @@ else if (_selectedAsset is not null)
 
     <MudCard Elevation="2" Class="mb-4">
         <MudCardHeader>
-            <MudText Typo="Typo.h6">@(_selectedAsset.DisplayName ?? _selectedAsset.Name)</MudText>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">@(_selectedAsset.DisplayName ?? _selectedAsset.Name)</MudText>
+            </CardHeaderContent>
+            <CardHeaderActions>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Color="Color.Primary"
+                               OnClick="OpenEditDialog"
+                               aria-label="装置情報を編集" />
+            </CardHeaderActions>
         </MudCardHeader>
         <MudCardContent>
             <MudGrid>
@@ -132,10 +141,43 @@ else
     }
 }
 
+@* 装置編集ダイアログ *@
+<MudDialog @bind-Visible="_editDialogVisible" Options="_editDialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">装置情報の編集</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_editDisplayName" Label="表示名" Class="mb-3" />
+        <MudTextField @bind-Value="_editDescription" Label="説明" Lines="3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseEditDialog">キャンセル</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAssetAsync" Disabled="_saving">
+            @if (_saving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            保存
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
 @code {
     private List<AssetSummaryItem> _assets = [];
     private AssetDetailItem? _selectedAsset;
     private bool _loading = true;
+
+    // 編集ダイアログ
+    private bool _editDialogVisible;
+    private string _editDisplayName = "";
+    private string _editDescription = "";
+    private bool _saving;
+    private readonly DialogOptions _editDialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -169,6 +211,53 @@ else
     private void ClearSelection()
     {
         _selectedAsset = null;
+    }
+
+    private void OpenEditDialog()
+    {
+        if (_selectedAsset is null) return;
+        _editDisplayName = _selectedAsset.DisplayName ?? _selectedAsset.Name;
+        _editDescription = _selectedAsset.Description ?? "";
+        _editDialogVisible = true;
+    }
+
+    private void CloseEditDialog()
+    {
+        _editDialogVisible = false;
+    }
+
+    private async Task SaveAssetAsync()
+    {
+        if (_selectedAsset is null) return;
+
+        _saving = true;
+        try
+        {
+            var success = await DashboardService.UpdateAssetAsync(
+                _selectedAsset.Id,
+                _editDisplayName,
+                _editDescription);
+
+            if (success)
+            {
+                Snackbar.Add("装置情報を更新しました", Severity.Success);
+                _editDialogVisible = false;
+                _selectedAsset = await DashboardService.GetAssetDetailAsync(_selectedAsset.Id);
+                _assets = await DashboardService.GetAssetsAsync();
+            }
+            else
+            {
+                Snackbar.Add("装置が見つかりません", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"更新に失敗しました: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private static Color GetStatusColor(string status) => status switch

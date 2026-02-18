@@ -60,6 +60,14 @@ public record PartJson
     /// <summary>メモ</summary>
     [JsonPropertyName("memo")]
     public string? Memo { get; init; }
+
+    /// <summary>単価（購入品のみ）</summary>
+    [JsonPropertyName("unit_price")]
+    public decimal? UnitPrice { get; init; }
+
+    /// <summary>通貨（購入品のみ）</summary>
+    [JsonPropertyName("currency")]
+    public string? Currency { get; init; }
 }
 
 /// <summary>
@@ -178,6 +186,15 @@ public class PartJsonReader
             .Select(kv => new ArtifactEntry { Path = kv.Key, Hash = kv.Value })
             .ToList();
 
+        // 購入品の場合は単価・通貨も出力
+        decimal? unitPrice = null;
+        string? currency = null;
+        if (component is PurchasedPart purchased)
+        {
+            unitPrice = purchased.UnitPrice;
+            currency = purchased.Currency;
+        }
+
         return new PartJson
         {
             Id = component.Id,
@@ -188,7 +205,9 @@ public class PartJsonReader
             Artifacts = artifacts,
             Standards = component.StandardIds,
             Metadata = component.Metadata.Count > 0 ? component.Metadata : null,
-            Memo = component.Memo
+            Memo = component.Memo,
+            UnitPrice = unitPrice,
+            Currency = currency
         };
     }
 

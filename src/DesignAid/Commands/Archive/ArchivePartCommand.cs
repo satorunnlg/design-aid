@@ -85,8 +85,8 @@ public class ArchivePartCommand : Command
             };
             await archiveIndexReader.AddEntryAsync(indexPath, entry);
 
-            // 元ディレクトリを削除
-            Directory.Delete(partPath, true);
+            // 元ディレクトリを削除（git の ReadOnly ファイル対策）
+            CommandHelper.ForceDeleteDirectory(partPath);
 
             var savedPercent = originalSize > 0 ? (1.0 - (double)archiveSize / originalSize) * 100 : 0;
 

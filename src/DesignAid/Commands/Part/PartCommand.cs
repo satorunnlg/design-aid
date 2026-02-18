@@ -13,5 +13,6 @@ public class PartCommand : Command
         this.Add(new PartListCommand());
         this.Add(new PartRemoveCommand());
         this.Add(new PartLinkCommand());
+        this.Add(new PartUpdateCommand());
     }
 }

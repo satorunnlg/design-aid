@@ -112,6 +112,7 @@ public class DashboardService
             Name = p.Name,
             Type = FormatPartType(p.Type),
             Status = p.Status.ToDisplayName(),
+            Memo = p.Memo,
             UpdatedAt = p.UpdatedAt
         }).ToList();
     }
@@ -268,6 +269,48 @@ public class DashboardService
         }).ToList();
     }
 
+    /// <summary>
+    /// 装置情報を更新する。
+    /// </summary>
+    public async Task<bool> UpdateAssetAsync(
+        Guid assetId,
+        string? displayName,
+        string? description,
+        CancellationToken ct = default)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(ct);
+
+        var asset = await context.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct);
+        if (asset is null) return false;
+
+        asset.Update(displayName, description);
+        await context.SaveChangesAsync(ct);
+        return true;
+    }
+
+    /// <summary>
+    /// パーツ情報を更新する（名称・メモ）。
+    /// </summary>
+    public async Task<bool> UpdatePartAsync(
+        Guid partId,
+        string? name,
+        string? memo,
+        CancellationToken ct = default)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(ct);
+
+        var part = await context.Parts.FirstOrDefaultAsync(p => p.Id == partId, ct);
+        if (part is null) return false;
+
+        if (name != null)
+            part.UpdateName(name);
+        if (memo != null)
+            part.Memo = memo;
+
+        await context.SaveChangesAsync(ct);
+        return true;
+    }
+
     private static string FormatPartType(PartType type) => type switch
     {
         PartType.Fabricated => "製作物",
@@ -308,6 +351,7 @@ public class PartSummaryItem
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? Memo { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
 

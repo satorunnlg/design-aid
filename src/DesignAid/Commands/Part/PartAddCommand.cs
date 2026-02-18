@@ -17,17 +17,27 @@ public class PartAddCommand : Command
         this.Add(new Option<string>("--name", "パーツ名") { IsRequired = true });
         this.Add(new Option<string>("--type", () => "Fabricated", "種別 (Fabricated/Purchased/Standard)"));
         this.Add(new Option<string?>("--material", "材質"));
+        this.Add(new Option<decimal?>("--price", "単価（Purchased のみ）"));
+        this.Add(new Option<string?>("--currency", "通貨コード（Purchased のみ、デフォルト: JPY）"));
         this.Add(new Option<bool>("--no-git", "Git リポジトリを初期化しない"));
 
-        this.Handler = CommandHandler.Create<string, string, string, string?, bool>(ExecuteAsync);
+        this.Handler = CommandHandler.Create<string, string, string, string?, decimal?, string?, bool>(ExecuteAsync);
     }
 
-    private static async Task ExecuteAsync(string partNumber, string name, string type, string? material, bool noGit)
+    private static async Task ExecuteAsync(string partNumber, string name, string type, string? material, decimal? price, string? currency, bool noGit)
     {
         if (!Enum.TryParse<PartType>(type, ignoreCase: true, out var partType))
         {
             Console.Error.WriteLine($"[ERROR] 不明なパーツ種別: {type}");
             Console.Error.WriteLine("有効な値: Fabricated, Purchased, Standard");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        // --price / --currency は Purchased のみ有効
+        if ((price != null || currency != null) && partType != PartType.Purchased)
+        {
+            Console.Error.WriteLine("[ERROR] --price / --currency は Purchased タイプのパーツにのみ指定できます");
             Environment.ExitCode = 2;
             return;
         }
@@ -47,7 +57,19 @@ public class PartAddCommand : Command
 
         Directory.CreateDirectory(partPath);
         var partId = Guid.NewGuid();
-        await partJsonReader.CreateAsync(partPath, partId, partNumber, name, partType);
+
+        // part.json を作成（価格情報があれば含む）
+        var partJson = new PartJson
+        {
+            Id = partId,
+            PartNumber = partNumber,
+            Name = name,
+            Type = partType.ToString(),
+            Version = "1.0.0",
+            UnitPrice = price,
+            Currency = price != null ? (currency ?? "JPY") : currency
+        };
+        await partJsonReader.WriteAsync(partPath, partJson);
 
         // Git リポジトリを初期化（デフォルト）
         var gitInitialized = false;
@@ -62,6 +84,10 @@ public class PartAddCommand : Command
         Console.WriteLine($"  Type: {partType}");
         Console.WriteLine($"  Path: {partPath}");
         Console.WriteLine($"  ID: {partId}");
+        if (price != null)
+        {
+            Console.WriteLine($"  Price: {price} {currency ?? "JPY"}");
+        }
         if (gitInitialized)
         {
             Console.WriteLine($"  Git: initialized");
