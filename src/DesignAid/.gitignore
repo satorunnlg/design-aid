@@ -1,0 +1,20 @@
+# Design Aid プロジェクト用 .gitignore
+
+# SQLite データベース（ローカル環境固有）
+*.db
+*.db-shm
+*.db-wal
+
+# HNSW インデックスキャッシュ（再構築可能）
+hnsw_index.bin
+*.hnsw
+
+# バックアップファイル
+*.zip
+*.backup
+
+# 一時ファイル
+*.tmp
+
+# ダッシュボード PID ファイル
+.dashboard.pid

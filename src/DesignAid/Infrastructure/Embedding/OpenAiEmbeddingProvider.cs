@@ -58,7 +58,7 @@ public class OpenAiEmbeddingProvider : IEmbeddingProvider, IDisposable
         {
             Input = [text],
             Model = _model,
-            Dimensions = _dimensions
+            Dimensions = SupportsDimensionsParam() ? _dimensions : null
         };
 
         var response = await _httpClient.PostAsJsonAsync("embeddings", request, ct);
@@ -88,26 +88,45 @@ public class OpenAiEmbeddingProvider : IEmbeddingProvider, IDisposable
             .Select(t => string.IsNullOrWhiteSpace(t) ? " " : t)
             .ToList();
 
-        var request = new OpenAiEmbeddingRequest
+        // OpenAI API はリクエストあたりのトークン上限があるため、バッチ分割する
+        const int batchSize = 100;
+        var allEmbeddings = new float[processedTexts.Count][];
+
+        for (int batchStart = 0; batchStart < processedTexts.Count; batchStart += batchSize)
         {
-            Input = processedTexts,
-            Model = _model,
-            Dimensions = _dimensions
-        };
+            var batch = processedTexts.Skip(batchStart).Take(batchSize).ToList();
+            var request = new OpenAiEmbeddingRequest
+            {
+                Input = batch,
+                Model = _model,
+                Dimensions = SupportsDimensionsParam() ? _dimensions : null
+            };
 
-        var response = await _httpClient.PostAsJsonAsync("embeddings", request, ct);
-        response.EnsureSuccessStatusCode();
+            var response = await _httpClient.PostAsJsonAsync("embeddings", request, ct);
+            response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<OpenAiEmbeddingResponse>(ct);
+            var result = await response.Content.ReadFromJsonAsync<OpenAiEmbeddingResponse>(ct);
 
-        if (result?.Data == null)
-            throw new InvalidOperationException("埋め込みレスポンスが空です");
+            if (result?.Data == null)
+                throw new InvalidOperationException("埋め込みレスポンスが空です");
 
-        // インデックス順にソートして返す
-        return result.Data
-            .OrderBy(d => d.Index)
-            .Select(d => d.Embedding)
-            .ToList();
+            // インデックス順にソートしてバッチ内の位置に格納
+            foreach (var data in result.Data.OrderBy(d => d.Index))
+            {
+                allEmbeddings[batchStart + data.Index] = data.Embedding;
+            }
+        }
+
+        return allEmbeddings.ToList();
+    }
+
+    /// <summary>
+    /// 使用モデルが dimensions パラメータをサポートするか判定する。
+    /// text-embedding-ada-002 は非対応（固定 1536 次元）。
+    /// </summary>
+    private bool SupportsDimensionsParam()
+    {
+        return !_model.Contains("ada-002", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -134,8 +153,12 @@ internal class OpenAiEmbeddingRequest
     [JsonPropertyName("model")]
     public string Model { get; set; } = "text-embedding-3-small";
 
+    /// <summary>
+    /// ベクトル次元数。text-embedding-ada-002 は非対応のため null にする。
+    /// </summary>
     [JsonPropertyName("dimensions")]
-    public int Dimensions { get; set; } = 1536;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Dimensions { get; set; }
 }
 
 /// <summary>

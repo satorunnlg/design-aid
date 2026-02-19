@@ -40,8 +40,7 @@ public class SearchCommand : Command
                 var settings = CommandHelper.LoadSettings();
                 if (settings.GetBool("vector_search.enabled", true))
                 {
-                    var dimensions = settings.GetInt("embedding.dimensions", 384);
-                    var embeddingProvider = new MockEmbeddingProvider(dimensions);
+                    var embeddingProvider = EmbeddingProviderFactory.Create(settings);
                     var dbPath = CommandHelper.GetDatabasePath();
 
                     if (File.Exists(dbPath))
@@ -102,10 +101,12 @@ public class SearchCommand : Command
                 results = results.Select(r => new
                 {
                     score = r.Score,
+                    type = r.Type,
                     partNumber = r.PartNumber,
                     content = r.Content,
                     projectName = r.ProjectName,
-                    assetName = r.AssetName
+                    assetName = r.AssetName,
+                    filePath = r.FilePath
                 })
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -123,11 +124,23 @@ public class SearchCommand : Command
             var rank = 1;
             foreach (var result in results)
             {
-                var projectInfo = string.IsNullOrEmpty(result.ProjectName)
-                    ? ""
-                    : $" (Project: {result.ProjectName})";
-
-                Console.WriteLine($"{rank}. [{result.Score:F2}] {result.PartNumber}{projectInfo}");
+                if (result.Type == "asset_doc")
+                {
+                    // 文書結果の表示（PartNumber に既に [DOC] プレフィックスが含まれる）
+                    Console.WriteLine($"{rank}. [{result.Score:F2}] {result.PartNumber}");
+                    if (!string.IsNullOrEmpty(result.FilePath))
+                    {
+                        Console.WriteLine($"     Path: {result.FilePath}");
+                    }
+                }
+                else
+                {
+                    // パーツ結果の表示
+                    var projectInfo = string.IsNullOrEmpty(result.ProjectName)
+                        ? ""
+                        : $" (Project: {result.ProjectName})";
+                    Console.WriteLine($"{rank}. [{result.Score:F2}] {result.PartNumber}{projectInfo}");
+                }
 
                 if (!string.IsNullOrEmpty(result.Content))
                 {

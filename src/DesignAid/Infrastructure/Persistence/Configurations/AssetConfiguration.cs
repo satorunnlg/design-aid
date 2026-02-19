@@ -41,6 +41,22 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
             .IsRequired()
             .HasMaxLength(1024);
 
+        // Status（int → string 変換）
+        builder.Property(a => a.Status)
+            .HasConversion(
+                v => v.ToString().ToLowerInvariant(),
+                v => Enum.Parse<AssetStatus>(v, true))
+            .HasColumnName("Status")
+            .HasDefaultValue(AssetStatus.Active);
+
+        // TagsRaw（カンマ区切りテキスト）
+        builder.Property(a => a.TagsRaw)
+            .HasColumnName("Tags")
+            .HasMaxLength(2000);
+
+        // Tags はマッピングしない（TagsRaw を通じてアクセス）
+        builder.Ignore(a => a.Tags);
+
         // 日時
         builder.Property(a => a.CreatedAt)
             .IsRequired()

@@ -24,6 +24,14 @@ public record AssetJson
     [JsonPropertyName("description")]
     public string? Description { get; init; }
 
+    /// <summary>ステータス（active/dormant/archived/third_party）</summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    /// <summary>タグ一覧</summary>
+    [JsonPropertyName("tags")]
+    public List<string>? Tags { get; init; }
+
     /// <summary>作成日時</summary>
     [JsonPropertyName("created_at")]
     public DateTime CreatedAt { get; init; }

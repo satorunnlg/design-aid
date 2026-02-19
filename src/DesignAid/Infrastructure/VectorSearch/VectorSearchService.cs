@@ -42,7 +42,7 @@ public class VectorSearchService : IDisposable
     public async Task UpsertPartAsync(DesignKnowledgePoint point, CancellationToken ct = default)
     {
         var text = BuildSearchableText(point);
-        var embedding = await _embeddingProvider.GenerateEmbeddingAsync(text, ct);
+        var embedding = Normalize(await _embeddingProvider.GenerateEmbeddingAsync(text, ct));
         var blob = ToBlob(embedding);
 
         // 既存エントリを検索
@@ -106,7 +106,7 @@ public class VectorSearchService : IDisposable
         for (int i = 0; i < pointsList.Count; i++)
         {
             var point = pointsList[i];
-            var embedding = embeddings[i];
+            var embedding = Normalize(embeddings[i]);
             var blob = ToBlob(embedding);
 
             var existing = await _context.VectorIndex
@@ -180,7 +180,7 @@ public class VectorSearchService : IDisposable
             return new List<SearchResult>();
         }
 
-        var queryEmbedding = await _embeddingProvider.GenerateEmbeddingAsync(query, ct);
+        var queryEmbedding = Normalize(await _embeddingProvider.GenerateEmbeddingAsync(query, ct));
 
         // KNN 検索を実行
         var knnResults = _hnswIndex.KNNSearch(queryEmbedding, limit);
@@ -254,8 +254,8 @@ public class VectorSearchService : IDisposable
             return;
         }
 
-        // ベクトルを復元
-        var vectors = entries.Select(e => FromBlob(e.Embedding)).ToList();
+        // ベクトルを復元（正規化を保証）
+        var vectors = entries.Select(e => Normalize(FromBlob(e.Embedding))).ToList();
 
         // HNSW インデックスを構築
         var parameters = new SmallWorldParameters()
@@ -333,7 +333,7 @@ public class VectorSearchService : IDisposable
             return;
         }
 
-        var vectors = entries.Select(e => FromBlob(e.Embedding)).ToList();
+        var vectors = entries.Select(e => Normalize(FromBlob(e.Embedding))).ToList();
 
         // キャッシュファイルからの復元を試みる
         if (File.Exists(_hnswIndexPath))
@@ -446,6 +446,26 @@ public class VectorSearchService : IDisposable
     private static string BuildContentForStorage(DesignKnowledgePoint point)
     {
         return point.Content;
+    }
+
+    /// <summary>
+    /// ベクトルを L2 正規化する（単位ベクトルに変換）。
+    /// CosineDistance.SIMDForUnits は正規化済みベクトルを前提とするため、
+    /// 埋め込みプロバイダーが返す生ベクトルを保存・検索前に正規化する必要がある。
+    /// </summary>
+    public static float[] Normalize(float[] vector)
+    {
+        var norm = 0.0f;
+        for (int i = 0; i < vector.Length; i++)
+            norm += vector[i] * vector[i];
+        norm = MathF.Sqrt(norm);
+
+        if (norm < 1e-12f) return vector;
+
+        var result = new float[vector.Length];
+        for (int i = 0; i < vector.Length; i++)
+            result[i] = vector[i] / norm;
+        return result;
     }
 
     /// <summary>

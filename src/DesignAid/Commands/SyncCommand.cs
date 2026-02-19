@@ -1,5 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DesignAid.Application.Services;
 using DesignAid.Infrastructure.Embedding;
@@ -184,7 +186,7 @@ public class SyncCommand : Command
                 if (includeVectors && !dryRun)
                 {
                     Console.WriteLine();
-                    SyncVectorIndex(componentsDir, partJsonReader);
+                    SyncVectorIndex(componentsDir, CommandHelper.GetAssetsDirectory(), partJsonReader);
                 }
                 return;
             }
@@ -242,7 +244,7 @@ public class SyncCommand : Command
             if (includeVectors && !dryRun)
             {
                 Console.WriteLine();
-                SyncVectorIndex(componentsDir, partJsonReader);
+                SyncVectorIndex(componentsDir, CommandHelper.GetAssetsDirectory(), partJsonReader);
             }
             else if (includeVectors && dryRun)
             {
@@ -252,7 +254,7 @@ public class SyncCommand : Command
         }
     }
 
-    private static void SyncVectorIndex(string componentsDir, PartJsonReader partJsonReader)
+    private static void SyncVectorIndex(string componentsDir, string assetsDir, PartJsonReader partJsonReader)
     {
         Console.WriteLine("Syncing to vector index...");
 
@@ -265,8 +267,7 @@ public class SyncCommand : Command
                 return;
             }
 
-            var dimensions = settings.GetInt("embedding.dimensions", 384);
-            var embeddingProvider = new MockEmbeddingProvider(dimensions);
+            var embeddingProvider = EmbeddingProviderFactory.Create(settings);
             var dbPath = CommandHelper.GetDatabasePath();
 
             var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
@@ -284,55 +285,189 @@ public class SyncCommand : Command
             // パーツ情報を収集してベクトル化
             var points = new List<DesignKnowledgePoint>();
 
-            foreach (var partDir in Directory.GetDirectories(componentsDir))
+            if (Directory.Exists(componentsDir))
             {
-                if (!partJsonReader.Exists(partDir)) continue;
-                var partJson = partJsonReader.Read(partDir);
-                if (partJson == null) continue;
-
-                var contentParts = new List<string>
+                foreach (var partDir in Directory.GetDirectories(componentsDir))
                 {
-                    partJson.Name,
-                    partJson.Type
-                };
+                    if (!partJsonReader.Exists(partDir)) continue;
+                    var partJson = partJsonReader.Read(partDir);
+                    if (partJson == null) continue;
 
-                if (!string.IsNullOrEmpty(partJson.Memo))
-                    contentParts.Add(partJson.Memo);
-
-                if (partJson.Metadata != null)
-                {
-                    foreach (var kv in partJson.Metadata)
+                    var contentParts = new List<string>
                     {
-                        contentParts.Add($"{kv.Key}:{kv.Value}");
-                    }
-                }
+                        partJson.Name,
+                        partJson.Type
+                    };
 
-                points.Add(new DesignKnowledgePoint
-                {
-                    Id = partJson.Id,
-                    PartId = partJson.Id,
-                    PartNumber = partJson.PartNumber,
-                    Type = "spec",
-                    Content = string.Join(" ", contentParts),
-                    CreatedAt = DateTime.UtcNow
-                });
+                    if (!string.IsNullOrEmpty(partJson.Memo))
+                        contentParts.Add(partJson.Memo);
+
+                    if (partJson.Metadata != null)
+                    {
+                        foreach (var kv in partJson.Metadata)
+                        {
+                            contentParts.Add($"{kv.Key}:{kv.Value}");
+                        }
+                    }
+
+                    points.Add(new DesignKnowledgePoint
+                    {
+                        Id = partJson.Id,
+                        PartId = partJson.Id,
+                        PartNumber = partJson.PartNumber,
+                        Type = "spec",
+                        Content = string.Join(" ", contentParts),
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
+
+            // asset 文書（.md ファイル）を収集してベクトル化
+            var docPoints = CollectAssetDocPoints(assetsDir);
+
+            // 既存の asset_doc エントリを削除（クリーン再登録）
+            var existingDocs = context.VectorIndex.Where(v => v.Type == "asset_doc").ToList();
+            if (existingDocs.Count > 0)
+            {
+                context.VectorIndex.RemoveRange(existingDocs);
+                context.SaveChanges();
+            }
+
+            // パーツとドキュメントを結合
+            points.AddRange(docPoints);
 
             if (points.Count > 0)
             {
                 vectorService.UpsertPartsAsync(points).GetAwaiter().GetResult();
                 vectorService.RebuildIndexAsync().GetAwaiter().GetResult();
-                Console.WriteLine($"[SUCCESS] {points.Count} 件のパーツをベクトルインデックスに同期しました");
+
+                var partCount = points.Count - docPoints.Count;
+                var docCount = docPoints.Count;
+                var messages = new List<string>();
+                if (partCount > 0) messages.Add($"{partCount} 件のパーツ");
+                if (docCount > 0) messages.Add($"{docCount} 件の文書チャンク");
+                Console.WriteLine($"[SUCCESS] {string.Join("、", messages)}をベクトルインデックスに同期しました");
             }
             else
             {
-                Console.WriteLine("[INFO] 同期対象のパーツがありません");
+                Console.WriteLine("[INFO] 同期対象のデータがありません");
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] ベクトルインデックス同期中にエラーが発生しました: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// assets/ 以下の .md ファイルをチャンク分割して DesignKnowledgePoint リストを生成する。
+    /// </summary>
+    private static List<DesignKnowledgePoint> CollectAssetDocPoints(string assetsDir)
+    {
+        var docPoints = new List<DesignKnowledgePoint>();
+
+        if (!Directory.Exists(assetsDir)) return docPoints;
+
+        var assetJsonReader = new AssetJsonReader();
+
+        foreach (var assetDir in Directory.GetDirectories(assetsDir))
+        {
+            if (!assetJsonReader.Exists(assetDir)) continue;
+            var assetJson = assetJsonReader.Read(assetDir);
+            if (assetJson == null) continue;
+
+            var assetName = assetJson.Name;
+
+            // .md ファイルを収集
+            var mdFiles = Directory.GetFiles(assetDir, "*.md", SearchOption.TopDirectoryOnly);
+            foreach (var mdFile in mdFiles)
+            {
+                var fileName = Path.GetFileName(mdFile);
+                var content = File.ReadAllText(mdFile, Encoding.UTF8);
+                if (string.IsNullOrWhiteSpace(content)) continue;
+
+                var relativePath = $"assets/{assetName}/{fileName}";
+                var chunks = ChunkByParagraph(content, 1000);
+
+                for (int i = 0; i < chunks.Count; i++)
+                {
+                    // 決定論的 GUID: asset名 + ファイルパス + チャンクインデックスから生成
+                    var deterministicId = GenerateDeterministicGuid($"{assetName}/{fileName}#{i}");
+
+                    docPoints.Add(new DesignKnowledgePoint
+                    {
+                        Id = deterministicId,
+                        PartId = deterministicId,
+                        PartNumber = $"[DOC] {assetName}/{fileName}",
+                        AssetName = assetName,
+                        AssetId = assetJson.Id,
+                        Type = "asset_doc",
+                        Content = chunks[i],
+                        FilePath = relativePath,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+        }
+
+        return docPoints;
+    }
+
+    /// <summary>
+    /// テキストを段落境界（空行）で分割し、最大 maxChars 文字のチャンクにまとめる。
+    /// </summary>
+    private static List<string> ChunkByParagraph(string text, int maxChars)
+    {
+        var chunks = new List<string>();
+        // 空行で段落を分割
+        var paragraphs = text.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+
+        var currentChunk = new StringBuilder();
+        foreach (var paragraph in paragraphs)
+        {
+            var trimmed = paragraph.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed)) continue;
+
+            // 単一段落が maxChars を超える場合はそのまま1チャンクとして追加
+            if (trimmed.Length > maxChars)
+            {
+                if (currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString().Trim());
+                    currentChunk.Clear();
+                }
+                chunks.Add(trimmed);
+                continue;
+            }
+
+            // 現在のチャンクに追加すると maxChars を超える場合
+            if (currentChunk.Length + trimmed.Length + 2 > maxChars && currentChunk.Length > 0)
+            {
+                chunks.Add(currentChunk.ToString().Trim());
+                currentChunk.Clear();
+            }
+
+            if (currentChunk.Length > 0) currentChunk.Append("\n\n");
+            currentChunk.Append(trimmed);
+        }
+
+        if (currentChunk.Length > 0)
+        {
+            chunks.Add(currentChunk.ToString().Trim());
+        }
+
+        return chunks;
+    }
+
+    /// <summary>
+    /// 文字列から決定論的な GUID を生成する（SHA256 ベース）。
+    /// </summary>
+    private static Guid GenerateDeterministicGuid(string input)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        var guidBytes = new byte[16];
+        Array.Copy(hash, guidBytes, 16);
+        return new Guid(guidBytes);
     }
 
     private class SyncChange

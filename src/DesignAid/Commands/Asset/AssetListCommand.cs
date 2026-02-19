@@ -14,11 +14,13 @@ public class AssetListCommand : Command
     {
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>("--verbose", () => false, "詳細表示（紐付きパーツ、子装置を含む）"));
+        this.Add(new Option<string?>("--status", "ステータスでフィルタ (active/dormant/archived/third_party)"));
+        this.Add(new Option<string?>("--tag", "タグでフィルタ"));
 
-        this.Handler = CommandHandler.Create<bool, bool>(Execute);
+        this.Handler = CommandHandler.Create<bool, bool, string?, string?>(Execute);
     }
 
-    private static void Execute(bool json, bool verbose)
+    private static void Execute(bool json, bool verbose, string? status, string? tag)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
@@ -35,11 +37,30 @@ public class AssetListCommand : Command
                 var assetJson = assetJsonReader.Read(dir);
                 if (assetJson == null) continue;
 
+                // ステータスフィルタ
+                if (!string.IsNullOrEmpty(status))
+                {
+                    var assetStatus = assetJson.Status ?? "active";
+                    if (!assetStatus.Equals(status, StringComparison.OrdinalIgnoreCase)
+                        && !assetStatus.Replace("_", "").Equals(status.Replace("_", ""), StringComparison.OrdinalIgnoreCase))
+                        continue;
+                }
+
+                // タグフィルタ
+                if (!string.IsNullOrEmpty(tag))
+                {
+                    var assetTags = assetJson.Tags ?? new List<string>();
+                    if (!assetTags.Any(t => t.Equals(tag, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                }
+
                 var assetInfo = new AssetInfo
                 {
                     Name = assetJson.Name,
                     DisplayName = assetJson.DisplayName ?? assetJson.Name,
                     Id = assetJson.Id,
+                    Status = assetJson.Status ?? "active",
+                    Tags = assetJson.Tags ?? new List<string>(),
                     Path = dir,
                     LinkedParts = new List<LinkedPartInfo>(),
                     ChildAssets = new List<ChildAssetInfo>()
@@ -117,8 +138,13 @@ public class AssetListCommand : Command
             Console.WriteLine("Assets:");
             foreach (var a in assets)
             {
-                Console.WriteLine($"  {a.Name} ({a.DisplayName})");
+                var statusLabel = a.Status != "active" ? $" [{a.Status}]" : "";
+                Console.WriteLine($"  {a.Name} ({a.DisplayName}){statusLabel}");
                 Console.WriteLine($"    ID: {a.Id}");
+                if (a.Tags.Count > 0)
+                {
+                    Console.WriteLine($"    Tags: {string.Join(", ", a.Tags)}");
+                }
 
                 if (verbose)
                 {
@@ -159,6 +185,8 @@ public class AssetListCommand : Command
         public string Name { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public Guid Id { get; set; }
+        public string Status { get; set; } = "active";
+        public List<string> Tags { get; set; } = new();
         public string Path { get; set; } = string.Empty;
         public List<LinkedPartInfo> LinkedParts { get; set; } = new();
         public List<ChildAssetInfo> ChildAssets { get; set; } = new();
