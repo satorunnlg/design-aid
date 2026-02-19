@@ -1,6 +1,21 @@
 namespace DesignAid.Domain.Entities;
 
 /// <summary>
+/// 装置のステータス。
+/// </summary>
+public enum AssetStatus
+{
+    /// <summary>アクティブ（運用中）</summary>
+    Active = 0,
+    /// <summary>休止中</summary>
+    Dormant = 1,
+    /// <summary>アーカイブ済み</summary>
+    Archived = 2,
+    /// <summary>他社製（参照のみ）</summary>
+    ThirdParty = 3
+}
+
+/// <summary>
 /// 装置を表すエンティティ。
 /// トップレベルのユニット・装置単位で管理し、複数の部品や子装置を含む。
 /// </summary>
@@ -20,6 +35,21 @@ public class Asset
 
     /// <summary>装置ディレクトリの絶対パス</summary>
     public string DirectoryPath { get; private set; } = string.Empty;
+
+    /// <summary>ステータス</summary>
+    public AssetStatus Status { get; set; } = AssetStatus.Active;
+
+    /// <summary>タグ（カンマ区切り内部保持）</summary>
+    public string? TagsRaw { get; set; }
+
+    /// <summary>タグ一覧（get/set でリスト⇔カンマ区切り変換）</summary>
+    public List<string> Tags
+    {
+        get => string.IsNullOrWhiteSpace(TagsRaw)
+            ? new List<string>()
+            : TagsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        set => TagsRaw = value.Count > 0 ? string.Join(",", value) : null;
+    }
 
     /// <summary>作成日時</summary>
     public DateTime CreatedAt { get; private set; }
@@ -102,10 +132,16 @@ public class Asset
     /// <summary>
     /// 装置情報を更新する。
     /// </summary>
-    public void Update(string? displayName = null, string? description = null)
+    public void Update(
+        string? displayName = null,
+        string? description = null,
+        AssetStatus? status = null,
+        List<string>? tags = null)
     {
         DisplayName = displayName ?? DisplayName;
         Description = description ?? Description;
+        if (status.HasValue) Status = status.Value;
+        if (tags != null) Tags = tags;
         UpdatedAt = DateTime.UtcNow;
     }
 

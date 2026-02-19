@@ -17,13 +17,21 @@ public class CheckCommand : Command
         this.Add(new Option<string?>("--path", "チェック対象のパス（省略時はカレントプロジェクト）"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>("--verbose", "詳細出力"));
+        this.Add(new Option<bool>("--duplicates", "パーツの重複・不整合を検出"));
 
-        this.Handler = CommandHandler.Create<string?, bool, bool>(Execute);
+        this.Handler = CommandHandler.Create<string?, bool, bool, bool>(Execute);
     }
 
-    private static void Execute(string? path, bool json, bool verbose)
+    private static void Execute(string? path, bool json, bool verbose, bool duplicates)
     {
         if (path == null && CommandHelper.EnsureDataDirectory() == null) return;
+
+        if (duplicates)
+        {
+            ExecuteDuplicateCheck(path, json);
+            return;
+        }
+
         var componentsDir = path ?? CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))
@@ -217,6 +225,169 @@ public class CheckCommand : Command
         }
 
         Console.WriteLine();
+    }
+
+    /// <summary>
+    /// パーツの重複・不整合をチェックする。
+    /// </summary>
+    private static void ExecuteDuplicateCheck(string? path, bool json)
+    {
+        var componentsDir = path ?? CommandHelper.GetComponentsDirectory();
+
+        if (!Directory.Exists(componentsDir))
+        {
+            if (json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    duplicates = Array.Empty<object>(),
+                    orphans = Array.Empty<object>(),
+                    mismatches = Array.Empty<object>()
+                }));
+            }
+            else
+            {
+                Console.WriteLine("チェック対象のパーツがありません");
+            }
+            return;
+        }
+
+        var partJsonReader = new PartJsonReader();
+        var duplicates = new List<DuplicateEntry>();
+        var orphans = new List<string>();
+        var mismatches = new List<MismatchEntry>();
+
+        // パーツ番号→ディレクトリパスのマッピングを構築
+        var partNumberMap = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var partDir in Directory.GetDirectories(componentsDir))
+        {
+            var dirName = Path.GetFileName(partDir);
+
+            if (!partJsonReader.Exists(partDir))
+            {
+                // 孤立ディレクトリ: part.json がない
+                orphans.Add(dirName);
+                continue;
+            }
+
+            var partJson = partJsonReader.Read(partDir);
+            if (partJson == null)
+            {
+                orphans.Add(dirName);
+                continue;
+            }
+
+            // ディレクトリ名と part_number の不整合を検出
+            if (!dirName.Equals(partJson.PartNumber, StringComparison.OrdinalIgnoreCase))
+            {
+                mismatches.Add(new MismatchEntry
+                {
+                    DirectoryName = dirName,
+                    PartNumber = partJson.PartNumber
+                });
+            }
+
+            // 重複検出用マップに追加
+            if (!partNumberMap.TryGetValue(partJson.PartNumber, out var dirs))
+            {
+                dirs = new List<string>();
+                partNumberMap[partJson.PartNumber] = dirs;
+            }
+            dirs.Add(dirName);
+        }
+
+        // 重複パーツ番号を抽出
+        foreach (var (partNumber, dirs) in partNumberMap)
+        {
+            if (dirs.Count > 1)
+            {
+                duplicates.Add(new DuplicateEntry
+                {
+                    PartNumber = partNumber,
+                    Directories = dirs
+                });
+            }
+        }
+
+        var hasIssues = duplicates.Count > 0 || orphans.Count > 0 || mismatches.Count > 0;
+
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                success = !hasIssues,
+                duplicates,
+                orphans,
+                mismatches
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        else
+        {
+            Console.WriteLine("Checking for duplicates and inconsistencies...");
+            Console.WriteLine();
+
+            if (duplicates.Count > 0)
+            {
+                Console.WriteLine("[DUPLICATES] 重複パーツ番号:");
+                foreach (var dup in duplicates)
+                {
+                    Console.WriteLine($"  ⚠ {dup.PartNumber}");
+                    foreach (var dir in dup.Directories)
+                    {
+                        Console.WriteLine($"      - {dir}/");
+                    }
+                }
+                Console.WriteLine();
+            }
+
+            if (orphans.Count > 0)
+            {
+                Console.WriteLine("[ORPHANS] part.json のないディレクトリ:");
+                foreach (var orphan in orphans)
+                {
+                    Console.WriteLine($"  ⚠ {orphan}/");
+                }
+                Console.WriteLine();
+            }
+
+            if (mismatches.Count > 0)
+            {
+                Console.WriteLine("[MISMATCH] ディレクトリ名と part_number の不一致:");
+                foreach (var mm in mismatches)
+                {
+                    Console.WriteLine($"  ⚠ ディレクトリ: {mm.DirectoryName}/ → part_number: {mm.PartNumber}");
+                }
+                Console.WriteLine();
+            }
+
+            if (!hasIssues)
+            {
+                Console.WriteLine("問題は見つかりませんでした");
+            }
+            else
+            {
+                Console.WriteLine($"Summary: {duplicates.Count} duplicate(s), {orphans.Count} orphan(s), {mismatches.Count} mismatch(es)");
+            }
+        }
+
+        if (hasIssues)
+        {
+            Environment.ExitCode = 5;
+        }
+    }
+
+    private class DuplicateEntry
+    {
+        public string PartNumber { get; set; } = string.Empty;
+        public List<string> Directories { get; set; } = new();
+    }
+
+    private class MismatchEntry
+    {
+        public string DirectoryName { get; set; } = string.Empty;
+        public string PartNumber { get; set; } = string.Empty;
     }
 
     private class CheckResult

@@ -896,7 +896,7 @@ Asset created: lifting-unit
 
 ### daid asset list
 
-登録済み装置を一覧表示する。
+登録済み装置を一覧表示する。ステータスやタグによるフィルタリングが可能。
 
 ```bash
 daid asset list
@@ -906,37 +906,56 @@ daid asset list --verbose
 
 # JSON 出力
 daid asset list --json
+
+# ステータスでフィルタ
+daid asset list --status dormant
+
+# タグでフィルタ
+daid asset list --tag mechanical
+
+# 組み合わせ
+daid asset list --status active --tag mechanical --verbose
 ```
+
+**オプション:**
+
+| オプション | 説明 |
+|-----------|------|
+| `--json` | JSON 形式で出力 |
+| `--verbose` | 詳細表示（紐付きパーツ・子装置を含む） |
+| `--status <status>` | ステータスでフィルタ（active/dormant/archived/third_party） |
+| `--tag <tag>` | タグでフィルタ（大文字小文字を区別しない） |
 
 **出力例:**
 ```
 Assets:
-
   lifting-unit (昇降ユニット)
+    ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Tags: mechanical, heavy-duty
 
-  control-panel (制御盤)
+  control-panel (制御盤) [dormant]
+    ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-  safety-module (安全モジュール)
+  safety-module (安全モジュール) [third_party]
+    ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Tags: safety
 
-Total: 3 assets
+Total: 3 asset(s)
 ```
 
 **出力例（--verbose）:**
 ```
 Assets:
-
   lifting-unit (昇降ユニット)
-    Linked Parts:
-      - BASE-PLATE-001 (x1)
-      - MTR-001 (x2)
+    ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Tags: mechanical
     Child Assets:
-      - safety-module (x1)
+      - safety-module (安全モジュール) x1
+    Linked Parts:
+      - BASE-PLATE-001 (ベースプレート) x1
+      - MTR-001 (モーター) x2
 
-  control-panel (制御盤)
-    Linked Parts: (none)
-    Child Assets: (none)
-
-Total: 2 assets
+Total: 1 asset(s)
 ```
 
 ### daid asset link
@@ -960,7 +979,7 @@ Child asset linked: safety-module to lifting-unit
 
 ### daid asset update
 
-装置の表示名や説明を更新する。ファイルシステム（asset.json）のみ更新する。
+装置の表示名、説明、ステータス、タグを更新する。ファイルシステム（asset.json）のみ更新する。
 
 ```bash
 # 表示名を更新
@@ -969,15 +988,48 @@ daid asset update lifting-unit --display-name "昇降ユニット Rev.2"
 # 説明を更新
 daid asset update lifting-unit --description "メインの昇降装置"
 
-# 両方を同時更新
-daid asset update lifting-unit --display-name "昇降ユニット Rev.2" --description "メインの昇降装置"
+# ステータスを変更
+daid asset update lifting-unit --status dormant
+
+# タグを一括設定（既存タグを置換）
+daid asset update lifting-unit --tags "mechanical,heavy-duty"
+
+# タグを追加
+daid asset update lifting-unit --add-tag safety
+
+# タグを削除
+daid asset update lifting-unit --remove-tag heavy-duty
+
+# 複数オプションを同時指定
+daid asset update lifting-unit --display-name "昇降ユニット Rev.2" --status active --add-tag reviewed
 ```
+
+**オプション:**
+
+| オプション | 説明 |
+|-----------|------|
+| `--display-name` | 表示名を更新 |
+| `--description` | 説明を更新 |
+| `--status <status>` | ステータスを変更（active/dormant/archived/third_party） |
+| `--tags <tag1,tag2>` | タグを一括設定（カンマ区切り、既存タグを置換） |
+| `--add-tag <tag>` | タグを追加（既存タグに追加） |
+| `--remove-tag <tag>` | タグを削除 |
+
+**ステータス値:**
+
+| 値 | 説明 |
+|----|------|
+| `active` | アクティブ（デフォルト） |
+| `dormant` | 休止中 |
+| `archived` | アーカイブ済み |
+| `third_party` | サードパーティ製 |
 
 **出力例:**
 ```
 Asset updated: lifting-unit
   DisplayName: 昇降ユニット Rev.2
-  Description: メインの昇降装置
+  Status: dormant
+  Tags: mechanical, safety
 ```
 
 ### daid asset unlink
@@ -1039,7 +1091,7 @@ Part linked: SP-2026-PLATE-01 to lifting-unit
 
 ### daid check
 
-ファイルハッシュの整合性を検証する。
+ファイルハッシュの整合性を検証する。`--duplicates` でパーツディレクトリの重複・不整合を検出する。
 
 ```bash
 # カレントディレクトリをチェック
@@ -1050,9 +1102,23 @@ daid check --path /path/to/project
 
 # JSON 出力
 daid check --json
+
+# パーツ重複・不整合検出
+daid check --duplicates
+
+# 重複検出を JSON 出力
+daid check --duplicates --json
 ```
 
-**出力例:**
+**オプション:**
+
+| オプション | 説明 |
+|-----------|------|
+| `--path` | チェック対象パスを指定 |
+| `--json` | JSON 形式で出力 |
+| `--duplicates` | パーツディレクトリの重複・不整合を検出（通常のハッシュチェックとは排他） |
+
+**出力例（通常チェック）:**
 ```
 Checking design integrity...
 
@@ -1070,6 +1136,27 @@ Checking design integrity...
 
 Summary: 1 OK, 1 Warning, 1 Error
 ```
+
+**出力例（--duplicates）:**
+```
+Checking for part duplicates and inconsistencies...
+
+[ORPHAN] temp-files
+    part.json が存在しません
+
+[MISMATCH] old-bracket
+    ディレクトリ名: old-bracket
+    part.json の part_number: SP-2026-BRACKET-01
+
+Summary: 0 duplicates, 1 orphan(s), 1 mismatch(es)
+```
+
+**検出項目:**
+- **重複パーツ番号**: 異なるディレクトリに同じ `part_number` を持つ part.json が存在
+- **孤立ディレクトリ**: ディレクトリ内に `part.json` がない
+- **名前不整合**: ディレクトリ名と `part.json` 内の `part_number` が一致しない
+
+**終了コード:** 問題検出時は `5` を返す。
 
 ### daid verify
 
@@ -1103,7 +1190,7 @@ Summary: 1 Pass, 1 Fail
 
 ### daid sync
 
-ファイルシステムと SQLite を同期する。`--include-vectors` でベクトルインデックスも再構築する。
+ファイルシステムと SQLite を同期する。`--include-vectors` でベクトルインデックスも再構築する（パーツ情報に加え、`assets/` 以下の `.md` ファイルも段落単位でチャンク分割してベクトル化する）。
 
 ```bash
 # 同期実行
@@ -1112,9 +1199,18 @@ daid sync
 # ドライラン（変更確認のみ）
 daid sync --dry-run
 
-# ベクトルインデックスの再構築も含む
+# ベクトルインデックスの再構築も含む（パーツ + asset 文書）
 daid sync --include-vectors
+
+# 強制同期（ハッシュを再計算）
+daid sync --force
 ```
+
+**ベクトル同期の対象:**
+- **パーツ**: `components/` 以下の全 part.json（名前、種別、メモ、メタデータ）
+- **asset 文書**: `assets/` 以下の全 `.md` ファイル（段落境界で分割、1チャンク最大 1000 文字）
+
+asset 文書は `Type = "asset_doc"` として登録され、`daid search` で `[DOC]` ラベル付きの結果として表示される。
 
 **出力例:**
 ```
@@ -1183,7 +1279,7 @@ Mark these parts as ordered? [y/N]
 
 ### daid search
 
-類似設計をベクトル検索する。
+類似設計をベクトル検索する。パーツ情報に加え、`daid sync --include-vectors` で登録された asset 文書（`.md` ファイル）もヒットする。
 
 ```bash
 # キーワード検索
@@ -1206,14 +1302,19 @@ Results:
 1. [0.92] SP-2024-LIFT-BASE-01 (Project: elevator-renewal)
    "昇降ユニット ベースフレーム SS400 溶接構造"
 
-2. [0.87] SP-2023-PLATFORM-01 (Project: production-line)
-   "昇降テーブル プラットフォーム SS400"
+2. [0.87] [DOC] lifting-unit/DESIGN.md
+   File: assets/lifting-unit/DESIGN.md
+   "昇降機構の設計方針として SS400 溶接構造を採用..."
 
 3. [0.82] SP-2025-SLIDE-01 (Project: packaging-machine)
    "スライド機構 ベースプレート SS400"
 
 Found 3 similar designs
 ```
+
+**結果の種別:**
+- パーツ結果: `[スコア] パーツ番号 (Project: 装置名)` の形式
+- 文書結果: `[スコア] [DOC] 装置名/ファイル名` の形式（`Type = "asset_doc"`）
 
 ### daid status
 
@@ -1248,8 +1349,17 @@ Parts: 40 total
 装置やパーツをアーカイブして容量を節約する。アーカイブされたデータは ZIP 圧縮され、ベクトルインデックスは維持されるため検索は引き続き可能。
 
 ```bash
-# 装置をアーカイブ
+# 装置をアーカイブ（単一）
 daid archive asset old-unit
+
+# Dormant ステータスの装置を全てアーカイブ
+daid archive asset --all-dormant
+
+# リストファイルから一括アーカイブ（1行1装置名、# でコメント可）
+daid archive asset --list archive-targets.txt
+
+# 確認をスキップ（バッチ処理向け）
+daid archive asset --all-dormant --yes
 
 # パーツをアーカイブ
 daid archive part OLD-PART-001
@@ -1265,7 +1375,18 @@ daid archive restore asset old-unit
 daid archive restore part OLD-PART-001
 ```
 
-**出力例（アーカイブ時）:**
+**`daid archive asset` オプション:**
+
+| オプション | 説明 |
+|-----------|------|
+| `<name>` | アーカイブする装置名（単一指定） |
+| `--all-dormant` | Status=Dormant の装置を全てアーカイブ |
+| `--list <file>` | 装置名リストファイルから一括アーカイブ |
+| `--yes` | 確認プロンプトをスキップ |
+
+※ `<name>`, `--all-dormant`, `--list` はいずれか1つのみ指定可能。
+
+**出力例（単一アーカイブ時）:**
 ```
 Archiving asset: old-unit
   Source: data/assets/old-unit
@@ -1275,8 +1396,21 @@ Asset archived: old-unit
   Original size: 15.2 MB
   Archive size: 3.8 MB
   Saved: 75.0%
+```
 
-Note: Vector index entries are preserved for search.
+**出力例（バッチアーカイブ時）:**
+```
+以下の 3 件の装置をアーカイブします:
+  - old-unit-a
+  - old-unit-b
+  - old-unit-c
+
+続行しますか？ (y/N): y
+
+Archiving asset: old-unit-a
+...
+
+Batch archive complete: 3 succeeded, 0 failed
 ```
 
 **出力例（一覧表示）:**
@@ -1859,9 +1993,64 @@ DesignAid.Application.DTOs          # DTO
 DesignAid.Infrastructure            # インフラ層
 DesignAid.Infrastructure.Persistence # DB 永続化
 DesignAid.Infrastructure.VectorSearch # ベクトル検索（SQLite+HNSW）
+DesignAid.Infrastructure.Embedding   # 埋め込みプロバイダー
 DesignAid.Infrastructure.FileSystem # ファイルシステム
 DesignAid.Configuration             # 設定
 ```
+
+## 埋め込みプロバイダー
+
+`daid sync --include-vectors` および `daid search` で使用する埋め込み（Embedding）プロバイダーは、`daid config` 設定により切り替え可能。`EmbeddingProviderFactory` が設定値に基づいてプロバイダーインスタンスを生成する。
+
+### 利用可能なプロバイダー
+
+| プロバイダー | 設定値 | 説明 |
+|-------------|--------|------|
+| Mock | `mock`（デフォルト） | SHA256 ハッシュベースの疑似ベクトル生成。外部依存なし。意味的類似性は無い |
+| Ollama | `ollama` | ローカル実行の Ollama サーバー。GPU 不要で動作可能 |
+| OpenAI | `openai` | OpenAI text-embedding API。高精度だが API キーが必要 |
+| Azure OpenAI | `azure_openai` | Azure OpenAI Service。エンタープライズ向け |
+
+### 設定方法
+
+```bash
+# プロバイダーを切り替え
+daid config set embedding.provider mock      # デフォルト（疑似ベクトル）
+daid config set embedding.provider ollama    # ローカル Ollama
+daid config set embedding.provider openai    # OpenAI API
+daid config set embedding.provider azure_openai  # Azure OpenAI
+
+# ベクトル次元数（共通）
+daid config set embedding.dimensions 1536
+
+# Ollama 設定
+daid config set embedding.ollama_url http://localhost:11434
+daid config set embedding.model nomic-embed-text
+
+# OpenAI 設定
+daid config set embedding.model text-embedding-ada-002
+daid config set embedding.api_key sk-...     # または環境変数 OPENAI_API_KEY
+
+# Azure OpenAI 設定
+daid config set embedding.azure_endpoint https://your-resource.openai.azure.com/
+daid config set embedding.api_key ...        # または環境変数 AZURE_OPENAI_API_KEY
+daid config set embedding.model text-embedding-ada-002
+```
+
+### 推奨構成
+
+| 用途 | プロバイダー | 理由 |
+|------|-------------|------|
+| 開発・テスト | `mock` | 外部依存なし、即座に動作 |
+| 個人利用（オフライン） | `ollama` | ローカル実行、API キー不要 |
+| 個人利用（高精度） | `openai` | 高品質な埋め込み、低コスト |
+| 本番・エンタープライズ | `azure_openai` | SLA・セキュリティ要件対応 |
+
+### API キーの管理
+
+API キーは以下の優先順序で解決される:
+1. `daid config set embedding.api_key` で設定された値
+2. 環境変数: `OPENAI_API_KEY`（OpenAI）/ `AZURE_OPENAI_API_KEY`（Azure）
 
 ## 変更履歴
 
@@ -1871,12 +2060,13 @@ DesignAid.Configuration             # 設定
 | 2026-02-15 | - | ベクトル検索を Qdrant から SQLite+HNSW に移行（Docker 依存解消） | - |
 | 2026-02-18 | - | バグ修正（search --local 重複キー、archive Windows 対応）、`daid part update` / `daid asset bom` コマンド追加、パーツ価格管理 CLI 公開 | - |
 | 2026-02-18 | - | `daid asset update` コマンド追加、ダッシュボード編集機能（装置・パーツのインライン編集 UI）、ダッシュボード CSS/レイアウト修正（ダークテーマ対応） | - |
+| 2026-02-19 | - | Phase C + D-1 実装: パーツ重複検出（`daid check --duplicates`）、asset 文書ベクトルインデックス登録（`daid sync --include-vectors` で `.md` ファイル対応）、asset メタデータ拡充（Status + Tags、フィルタリング対応）、バッチアーカイブ（`--all-dormant` / `--list`）、埋め込みプロバイダー選定（`EmbeddingProviderFactory` で mock/ollama/openai/azure 切替） | - |
 
 ## 備考
 
 ### 未設定項目（開発開始前に要設定）
 
-- [ ] 埋め込みプロバイダーの選定（OpenAI / Ollama / Azure）
+- [x] ~~埋め込みプロバイダーの選定（OpenAI / Ollama / Azure）~~ → 2026-02-19 実装済み（`EmbeddingProviderFactory` で mock/ollama/openai/azure_openai 切替対応）
 - [ ] 設計基準の具体的ルール定義
 - [ ] 材料データベースの準備
 
@@ -1888,7 +2078,7 @@ DesignAid.Configuration             # 設定
 - [ ] Excel 帳票自動生成
 - [ ] 3D CAD 対応（STEP/IGES）
 - [ ] チーム共有機能（サーバー版）
-- [ ] asset 文書のベクトルインデックス登録（`daid sync --include-vectors` は parts のみ対象。asset の DESIGN.md / CLAUDE.md をベクトル化して `daid search` で検索可能にする。アーカイブ済み asset も含めて文書内容で類似プロジェクトを検索できるようにする）
+- [x] ~~asset 文書のベクトルインデックス登録~~ → 2026-02-19 実装済み（`daid sync --include-vectors` で `assets/` 以下の `.md` ファイルを段落チャンク分割してベクトル化、`daid search` で `[DOC]` 結果として表示）
 - [x] ~~`daid search --local` の重複キーバグ修正~~ → 2026-02-18 修正済み（Dictionary → List<(string,double)> に変更）
 - [x] ~~`daid archive asset` の Windows 対応改善~~ → 2026-02-18 修正済み（ForceDeleteDirectory で ReadOnly 属性解除後に削除）
 - [x] ~~パーツ価格管理の CLI 公開~~ → 2026-02-18 実装済み（`daid part add --price --currency` / `daid part update` コマンド追加）
@@ -1898,11 +2088,11 @@ DesignAid.Configuration             # 設定
 
 以下は Works Hub 運用で有用と思われるが、git 連携や使い分けパターンの設計が必要なため未着手。
 
-- **asset メタデータ拡充**: status（active/dormant/archived/third-party）、language、tags 等を管理し、`daid asset list` でフィルタリング・ソート可能にする
+- ~~**asset メタデータ拡充**~~: → 2026-02-19 実装済み（Status: active/dormant/archived/third_party + Tags。`daid asset update --status/--tags/--add-tag/--remove-tag`、`daid asset list --status/--tag` フィルタ対応）
 - **git 連携による活性度自動検出**: `daid sync` 時に `.git` の最終コミット日を自動収集し、`daid asset list --inactive-since 2025-01` 等で休止プロジェクトを特定
-- **バッチ操作**: `daid archive asset --all-dormant` 等の一括アーカイブ。リストファイル指定にも対応
+- ~~**バッチ操作**~~: → 2026-02-19 実装済み（`daid archive asset --all-dormant/--list/--yes` で一括アーカイブ対応）
 - **プロジェクト分析**: `daid asset analyze <name>` で設定ファイルから言語・フレームワークを自動検出し、テンプレートとの不一致を検出
-- **part 重複検出**: `daid check --duplicates` で同一 part_number の重複エントリを検出・統合
+- ~~**part 重複検出**~~: → 2026-02-19 実装済み（`daid check --duplicates` で重複 part_number、孤立ディレクトリ、名前不整合を検出）
 
 ### MCP サーバー設計検討（2026-02-06 調査）
 
