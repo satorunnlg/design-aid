@@ -325,8 +325,11 @@ public class SyncCommand : Command
             // asset 文書（.md ファイル）を収集してベクトル化
             var docPoints = CollectAssetDocPoints(assetsDir);
 
-            // 既存の asset_doc エントリを削除（クリーン再登録）
-            var existingDocs = context.VectorIndex.Where(v => v.Type == "asset_doc").ToList();
+            // 現在 assets/ に存在するアセットの asset_doc エントリのみ削除（アーカイブ済みは保持）
+            var activeAssetNames = docPoints.Select(d => d.AssetName).Where(n => n != null).Distinct().ToHashSet();
+            var existingDocs = context.VectorIndex
+                .Where(v => v.Type == "asset_doc" && v.AssetName != null && activeAssetNames.Contains(v.AssetName))
+                .ToList();
             if (existingDocs.Count > 0)
             {
                 context.VectorIndex.RemoveRange(existingDocs);
