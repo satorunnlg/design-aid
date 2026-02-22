@@ -79,8 +79,19 @@ public class DashboardCommand : Command
 
         var url = $"http://localhost:{port}";
 
-        var builder = WebApplication.CreateBuilder();
+        // ContentRootPath をアプリケーションのベースディレクトリに設定。
+        // デフォルトではカレントディレクトリが使われるため、
+        // ユーザーのデータディレクトリから起動すると静的ファイルが見つからない。
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ContentRootPath = AppContext.BaseDirectory
+        });
         builder.WebHost.UseUrls(url);
+
+        // CLI ツールでは ASPNETCORE_ENVIRONMENT が未設定（= Production）のため、
+        // 静的ウェブアセット（MudBlazor CSS/JS 等）の自動ロードが無効。
+        // 明示的に有効化して RCL アセットを配信する。
+        builder.WebHost.UseStaticWebAssets();
 
         // Blazor Server サービス
         builder.Services.AddRazorComponents()
