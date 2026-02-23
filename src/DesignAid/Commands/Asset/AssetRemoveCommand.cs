@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Asset;
 
@@ -38,6 +39,28 @@ public class AssetRemoveCommand : Command
                 Console.WriteLine("キャンセルしました");
                 return;
             }
+        }
+
+        // DB からも削除
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var dbAsset = db.Assets.FirstOrDefault(a => a.Name == name);
+            if (dbAsset != null)
+            {
+                // 関連する中間テーブルも削除
+                var subAssets = db.AssetSubAssets
+                    .Where(s => s.ParentAssetId == dbAsset.Id || s.ChildAssetId == dbAsset.Id);
+                db.AssetSubAssets.RemoveRange(subAssets);
+                var components = db.AssetComponents.Where(c => c.AssetId == dbAsset.Id);
+                db.AssetComponents.RemoveRange(components);
+                db.Assets.Remove(dbAsset);
+                db.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 削除に失敗しました: {ex.Message}");
         }
 
         Directory.Delete(assetPath, recursive: true);

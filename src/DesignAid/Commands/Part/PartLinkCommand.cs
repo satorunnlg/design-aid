@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Text.Json;
+using DesignAid.Domain.Entities;
+using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.FileSystem;
 
 namespace DesignAid.Commands.Part;
@@ -86,6 +88,32 @@ public class PartLinkCommand : Command
         // asset_links.json を保存
         var json = JsonSerializer.Serialize(links, JsonOptions);
         File.WriteAllText(linksPath, json);
+
+        // DB にも登録
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var dbAsset = db.Assets.FirstOrDefault(a => a.Name == asset);
+            var dbPart = db.Parts.FirstOrDefault(p => p.PartNumber == new PartNumber(partNumber));
+            if (dbAsset != null && dbPart != null)
+            {
+                var existingComp = db.AssetComponents
+                    .FirstOrDefault(c => c.AssetId == dbAsset.Id && c.PartId == dbPart.Id);
+                if (existingComp != null)
+                {
+                    existingComp.UpdateQuantity(quantity);
+                }
+                else
+                {
+                    db.AssetComponents.Add(AssetComponent.Create(dbAsset.Id, dbPart.Id, quantity));
+                }
+                db.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は更新済み）: {ex.Message}");
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

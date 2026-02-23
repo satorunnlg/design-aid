@@ -1,7 +1,9 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using DesignAid.Domain.Entities;
+using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Part;
 
@@ -81,6 +83,28 @@ public class PartUpdateCommand : Command
         };
 
         await partJsonReader.WriteAsync(partPath, updated);
+
+        // DB も更新
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var dbPart = await db.Parts.FirstOrDefaultAsync(p => p.PartNumber == new PartNumber(partNumber));
+            if (dbPart != null)
+            {
+                if (name != null) dbPart.UpdateName(name);
+                if (memo != null) dbPart.Memo = memo;
+                if (material != null) dbPart.SetMetadata("material", material);
+                if (dbPart is PurchasedPart pp && (price != null || currency != null))
+                {
+                    pp.UpdatePurchaseInfo(unitPrice: price, currency: currency);
+                }
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 更新に失敗しました（JSON は更新済み）: {ex.Message}");
+        }
 
         // 変更内容を表示
         Console.WriteLine($"Part updated: {partNumber}");

@@ -2,7 +2,9 @@ using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Diagnostics;
 using DesignAid.Domain.Entities;
+using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Part;
 
@@ -70,6 +72,36 @@ public class PartAddCommand : Command
             Currency = price != null ? (currency ?? "JPY") : currency
         };
         await partJsonReader.WriteAsync(partPath, partJson);
+
+        // DB にも登録
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var existing = await db.Parts.FirstOrDefaultAsync(p => p.PartNumber == new PartNumber(partNumber));
+            if (existing == null)
+            {
+                DesignComponent dbPart = partType switch
+                {
+                    PartType.Fabricated => FabricatedPart.Create(new PartNumber(partNumber), name, partPath),
+                    PartType.Purchased => PurchasedPart.Create(new PartNumber(partNumber), name, partPath),
+                    PartType.Standard => StandardPart.Create(new PartNumber(partNumber), name, partPath),
+                    _ => FabricatedPart.Create(new PartNumber(partNumber), name, partPath)
+                };
+
+                // 購入品の場合、価格情報を設定
+                if (dbPart is PurchasedPart pp && price != null)
+                {
+                    pp.UpdatePurchaseInfo(unitPrice: price, currency: currency ?? "JPY");
+                }
+
+                db.Parts.Add(dbPart);
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は作成済み）: {ex.Message}");
+        }
 
         // Git リポジトリを初期化（デフォルト）
         var gitInitialized = false;

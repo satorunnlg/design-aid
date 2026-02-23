@@ -121,6 +121,20 @@ public static class CommandHelper
     }
 
     /// <summary>
+    /// DbContext を生成して返す。マイグレーションも自動適用する。
+    /// 呼び出し元で using / Dispose すること。
+    /// </summary>
+    public static DesignAidDbContext CreateDbContext()
+    {
+        var dbPath = GetDatabasePath();
+        var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
+        optionsBuilder.UseSqlite($"Data Source={dbPath}");
+        var context = new DesignAidDbContext(optionsBuilder.Options);
+        context.Database.Migrate();
+        return context;
+    }
+
+    /// <summary>
     /// DB から SettingsService をロードして返す。
     /// DB が存在しない場合はデフォルト値のみを持つインスタンスを返す。
     /// </summary>

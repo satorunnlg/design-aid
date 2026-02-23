@@ -1,7 +1,9 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Text.Json;
+using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Asset;
 
@@ -104,6 +106,40 @@ public class AssetLinkCommand : Command
         // asset_links.json を保存
         var json = JsonSerializer.Serialize(links, JsonOptions);
         File.WriteAllText(linksPath, json);
+
+        // DB にも登録
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var parentDb = db.Assets.FirstOrDefault(a => a.Name == parentAsset);
+            var childDb = db.Assets.FirstOrDefault(a => a.Name == child);
+            if (parentDb != null && childDb != null)
+            {
+                var existingLink = db.AssetSubAssets
+                    .FirstOrDefault(s => s.ParentAssetId == parentDb.Id && s.ChildAssetId == childDb.Id);
+                if (existingLink != null)
+                {
+                    existingLink.Quantity = quantity;
+                    existingLink.Notes = notes;
+                }
+                else
+                {
+                    db.AssetSubAssets.Add(new AssetSubAsset
+                    {
+                        ParentAssetId = parentDb.Id,
+                        ChildAssetId = childDb.Id,
+                        Quantity = quantity,
+                        Notes = notes,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+                db.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は更新済み）: {ex.Message}");
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
