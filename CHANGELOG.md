@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5-alpha] - 2026-02-24
+
+### Fixed
+
+- **トリミング付きパブリッシュでダッシュボードが動作しないバグを修正**
+  - `PublishTrimmed=true` により `AntiforgeryRequestToken` のプロパティメタデータが削除され、Blazor 回路の初期化が失敗していた
+  - Blazor Server / MudBlazor / JSInterop / System.CommandLine の各アセンブリを `TrimmerRootAssembly` に追加しトリミングから保護
+  - リリースバイナリ（GitHub Actions ビルド）でダッシュボードのインタラクティブ機能が正常に動作するようになった
+
 ## [0.4.4-alpha] - 2026-02-24
 
 ### Fixed
@@ -255,7 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
 - **Vector Search**: 組み込み HNSW（SQLite BLOB + HNSW ライブラリ）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.5-alpha...HEAD
+[0.4.5-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.4-alpha...v0.4.5-alpha
 [0.4.4-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...v0.4.4-alpha
 [0.4.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.2-alpha...v0.4.3-alpha
 [0.2.0-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...v0.2.0-alpha
