@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6-alpha] - 2026-02-24
+
+### Fixed
+
+- **ダッシュボード類似検索のしきい値を修正**
+  - 検索しきい値が 0.5 とハードコードされており、実際の類似度スコア（0.2〜0.4）を超えるため結果が常に 0 件だった
+  - CLI のデフォルト（0.3）に合わせて修正
+
 ## [0.4.5-alpha] - 2026-02-24
 
 ### Fixed
@@ -264,7 +272,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
 - **Vector Search**: 組み込み HNSW（SQLite BLOB + HNSW ライブラリ）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.5-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.6-alpha...HEAD
+[0.4.6-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.5-alpha...v0.4.6-alpha
 [0.4.5-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.4-alpha...v0.4.5-alpha
 [0.4.4-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...v0.4.4-alpha
 [0.4.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.2-alpha...v0.4.3-alpha
