@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.FileSystem;
 
 namespace DesignAid.Commands.Part;
@@ -37,6 +38,25 @@ public class PartRemoveCommand : Command
                 Console.WriteLine("キャンセルしました");
                 return;
             }
+        }
+
+        // DB からも削除
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var dbPart = db.Parts.FirstOrDefault(p => p.PartNumber == new PartNumber(partNumber));
+            if (dbPart != null)
+            {
+                // 関連する中間テーブルも削除
+                var components = db.AssetComponents.Where(c => c.PartId == dbPart.Id);
+                db.AssetComponents.RemoveRange(components);
+                db.Parts.Remove(dbPart);
+                db.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 削除に失敗しました: {ex.Message}");
         }
 
         Directory.Delete(partPath, recursive: true);

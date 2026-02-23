@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DesignAid.Application.Services;
+using DesignAid.Domain.Entities;
+using DesignAid.Domain.ValueObjects;
 using DesignAid.Infrastructure.Embedding;
 using DesignAid.Infrastructure.FileSystem;
 using DesignAid.Infrastructure.Persistence;
@@ -23,14 +25,16 @@ public class SyncCommand : Command
         this.Add(new Option<bool>("--include-vectors", "ベクトルインデックスへの同期も含む"));
         this.Add(new Option<bool>("--force", "強制同期（ハッシュを再計算）"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
+        this.Add(new Option<bool>("--skip-db", "DB同期をスキップ"));
 
-        this.Handler = CommandHandler.Create<bool, bool, bool, bool>(Execute);
+        this.Handler = CommandHandler.Create<bool, bool, bool, bool, bool>(Execute);
     }
 
-    private static void Execute(bool dryRun, bool includeVectors, bool force, bool json)
+    private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
+        var assetsDir = CommandHelper.GetAssetsDirectory();
 
         if (!Directory.Exists(componentsDir))
         {
@@ -41,6 +45,12 @@ public class SyncCommand : Command
             else
             {
                 Console.WriteLine("同期対象のパーツがありません");
+            }
+
+            // パーツがなくてもアセットの DB 同期は実行する
+            if (!skipDb && !dryRun)
+            {
+                SyncToDatabase(assetsDir, null, new PartJsonReader());
             }
             return;
         }
@@ -182,11 +192,18 @@ public class SyncCommand : Command
             {
                 Console.WriteLine("変更はありません");
 
+                // DB 同期（ファイル変更がなくても実行）
+                if (!skipDb && !dryRun)
+                {
+                    Console.WriteLine();
+                    SyncToDatabase(assetsDir, componentsDir, partJsonReader);
+                }
+
                 // ファイル変更がなくてもベクトルインデックス同期は実行する
                 if (includeVectors && !dryRun)
                 {
                     Console.WriteLine();
-                    SyncVectorIndex(componentsDir, CommandHelper.GetAssetsDirectory(), partJsonReader);
+                    SyncVectorIndex(componentsDir, assetsDir, partJsonReader);
                 }
                 return;
             }
@@ -241,10 +258,17 @@ public class SyncCommand : Command
                 Console.WriteLine("(dry-run モードのため、実際の変更は行われていません)");
             }
 
+            // DB 同期
+            if (!skipDb && !dryRun)
+            {
+                Console.WriteLine();
+                SyncToDatabase(assetsDir, componentsDir, partJsonReader);
+            }
+
             if (includeVectors && !dryRun)
             {
                 Console.WriteLine();
-                SyncVectorIndex(componentsDir, CommandHelper.GetAssetsDirectory(), partJsonReader);
+                SyncVectorIndex(componentsDir, assetsDir, partJsonReader);
             }
             else if (includeVectors && dryRun)
             {
@@ -252,6 +276,221 @@ public class SyncCommand : Command
                 Console.WriteLine("[INFO] dry-run モードのためベクトルインデックスへの同期はスキップされました");
             }
         }
+    }
+
+    /// <summary>
+    /// ファイルシステムの asset.json / part.json / asset_links.json を DB に UPSERT する。
+    /// </summary>
+    private static void SyncToDatabase(string assetsDir, string? componentsDir, PartJsonReader partJsonReader)
+    {
+        Console.WriteLine("Syncing to database...");
+
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var assetJsonReader = new AssetJsonReader();
+
+            int assetCount = 0, partCount = 0, linkCount = 0;
+
+            // 1. Assets の UPSERT
+            if (Directory.Exists(assetsDir))
+            {
+                foreach (var assetDir in Directory.GetDirectories(assetsDir))
+                {
+                    if (!assetJsonReader.Exists(assetDir)) continue;
+                    var assetJson = assetJsonReader.Read(assetDir);
+                    if (assetJson == null) continue;
+
+                    var dbAsset = db.Assets.FirstOrDefault(a => a.Name == assetJson.Name);
+                    if (dbAsset == null)
+                    {
+                        // 新規登録
+                        dbAsset = Domain.Entities.Asset.Create(assetJson.Name, assetDir, assetJson.DisplayName, assetJson.Description);
+                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var status))
+                        {
+                            dbAsset.Update(status: status);
+                        }
+                        if (assetJson.Tags != null && assetJson.Tags.Count > 0)
+                        {
+                            dbAsset.Update(tags: assetJson.Tags);
+                        }
+                        db.Assets.Add(dbAsset);
+                        assetCount++;
+                    }
+                    else
+                    {
+                        // 既存更新
+                        AssetStatus? newStatus = null;
+                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var parsed))
+                        {
+                            newStatus = parsed;
+                        }
+                        dbAsset.Update(
+                            displayName: assetJson.DisplayName,
+                            description: assetJson.Description,
+                            status: newStatus,
+                            tags: assetJson.Tags);
+                        dbAsset.UpdatePath(assetDir);
+                    }
+                }
+                db.SaveChanges();
+            }
+
+            // 2. Parts の UPSERT
+            if (componentsDir != null && Directory.Exists(componentsDir))
+            {
+                foreach (var partDir in Directory.GetDirectories(componentsDir))
+                {
+                    if (!partJsonReader.Exists(partDir)) continue;
+                    var partJson = partJsonReader.Read(partDir);
+                    if (partJson == null) continue;
+
+                    if (!PartNumber.TryCreate(partJson.PartNumber, out var pn)) continue;
+
+                    var dbPart = db.Parts.FirstOrDefault(p => p.PartNumber == pn);
+                    if (dbPart == null)
+                    {
+                        // 新規登録（TPH に従い型別に生成）
+                        var partType = PartJsonReader.ParsePartType(partJson);
+                        DesignComponent newPart = partType switch
+                        {
+                            PartType.Purchased => PurchasedPart.Create(pn, partJson.Name, partDir),
+                            PartType.Standard => StandardPart.Create(pn, partJson.Name, partDir),
+                            _ => FabricatedPart.Create(pn, partJson.Name, partDir)
+                        };
+
+                        if (newPart is PurchasedPart pp && partJson.UnitPrice != null)
+                        {
+                            pp.UpdatePurchaseInfo(unitPrice: partJson.UnitPrice, currency: partJson.Currency ?? "JPY");
+                        }
+                        if (partJson.Memo != null) newPart.Memo = partJson.Memo;
+
+                        db.Parts.Add(newPart);
+                        partCount++;
+                    }
+                    else
+                    {
+                        // 既存更新
+                        dbPart.UpdateName(partJson.Name);
+                        if (partJson.Memo != null) dbPart.Memo = partJson.Memo;
+                        if (dbPart is PurchasedPart existingPp && partJson.UnitPrice != null)
+                        {
+                            existingPp.UpdatePurchaseInfo(unitPrice: partJson.UnitPrice, currency: partJson.Currency);
+                        }
+                    }
+                }
+                db.SaveChanges();
+            }
+
+            // 3. Asset Links（AssetComponents + AssetSubAssets）の UPSERT
+            if (Directory.Exists(assetsDir))
+            {
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+                };
+
+                foreach (var assetDir in Directory.GetDirectories(assetsDir))
+                {
+                    var linksPath = Path.Combine(assetDir, "asset_links.json");
+                    if (!File.Exists(linksPath)) continue;
+
+                    var assetName = Path.GetFileName(assetDir);
+                    var dbAsset = db.Assets.FirstOrDefault(a => a.Name == assetName);
+                    if (dbAsset == null) continue;
+
+                    AssetLinksJson? links;
+                    try
+                    {
+                        var linksJson = File.ReadAllText(linksPath);
+                        links = JsonSerializer.Deserialize<AssetLinksJson>(linksJson, jsonOptions);
+                    }
+                    catch (JsonException)
+                    {
+                        continue;
+                    }
+                    if (links == null) continue;
+
+                    // パーツリンクの UPSERT
+                    if (links.Parts != null)
+                    {
+                        foreach (var partLink in links.Parts)
+                        {
+                            if (!PartNumber.TryCreate(partLink.PartNumber, out var pn)) continue;
+                            var dbPart = db.Parts.FirstOrDefault(p => p.PartNumber == pn);
+                            if (dbPart == null) continue;
+
+                            var existing = db.AssetComponents
+                                .FirstOrDefault(c => c.AssetId == dbAsset.Id && c.PartId == dbPart.Id);
+                            if (existing != null)
+                            {
+                                existing.UpdateQuantity(partLink.Quantity);
+                            }
+                            else
+                            {
+                                db.AssetComponents.Add(
+                                    AssetComponent.Create(dbAsset.Id, dbPart.Id, partLink.Quantity));
+                                linkCount++;
+                            }
+                        }
+                    }
+
+                    // 子装置リンクの UPSERT
+                    if (links.ChildAssets != null)
+                    {
+                        foreach (var childLink in links.ChildAssets)
+                        {
+                            var dbChild = db.Assets.FirstOrDefault(a => a.Name == childLink.ChildAssetName);
+                            if (dbChild == null) continue;
+
+                            var existing = db.AssetSubAssets
+                                .FirstOrDefault(s => s.ParentAssetId == dbAsset.Id && s.ChildAssetId == dbChild.Id);
+                            if (existing != null)
+                            {
+                                existing.Quantity = childLink.Quantity;
+                                existing.Notes = childLink.Notes;
+                            }
+                            else
+                            {
+                                db.AssetSubAssets.Add(new AssetSubAsset
+                                {
+                                    ParentAssetId = dbAsset.Id,
+                                    ChildAssetId = dbChild.Id,
+                                    Quantity = childLink.Quantity,
+                                    Notes = childLink.Notes,
+                                    CreatedAt = DateTime.UtcNow
+                                });
+                                linkCount++;
+                            }
+                        }
+                    }
+                }
+                db.SaveChanges();
+            }
+
+            Console.WriteLine($"[SUCCESS] DB同期完了: {assetCount} 件の装置、{partCount} 件のパーツを新規登録、{linkCount} 件のリンクを追加");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] DB同期中にエラーが発生しました: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// ステータス文字列を AssetStatus に変換する。
+    /// </summary>
+    private static bool TryParseAssetStatus(string status, out AssetStatus result)
+    {
+        result = status.ToLowerInvariant() switch
+        {
+            "active" => AssetStatus.Active,
+            "dormant" => AssetStatus.Dormant,
+            "archived" => AssetStatus.Archived,
+            "third_party" => AssetStatus.ThirdParty,
+            _ => AssetStatus.Active
+        };
+        return status.ToLowerInvariant() is "active" or "dormant" or "archived" or "third_party";
     }
 
     private static void SyncVectorIndex(string componentsDir, string assetsDir, PartJsonReader partJsonReader)
@@ -268,14 +507,9 @@ public class SyncCommand : Command
             }
 
             var embeddingProvider = EmbeddingProviderFactory.Create(settings);
-            var dbPath = CommandHelper.GetDatabasePath();
 
-            var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
-            optionsBuilder.UseSqlite($"Data Source={dbPath}");
-            using var context = new DesignAidDbContext(optionsBuilder.Options);
-
-            // マイグレーションを適用
-            context.Database.Migrate();
+            // CreateDbContext() で統一（Phase 5）
+            using var context = CommandHelper.CreateDbContext();
 
             var dataDir = CommandHelper.GetDataDirectory()!;
             var hnswIndexPath = Path.Combine(dataDir,
@@ -482,5 +716,25 @@ public class SyncCommand : Command
         public List<string> DeletedFiles { get; set; } = new();
         public List<string> ModifiedFiles { get; set; } = new();
         public bool Synced { get; set; }
+    }
+
+    // asset_links.json のデータクラス
+    private class AssetLinksJson
+    {
+        public List<PartLinkEntry>? Parts { get; set; }
+        public List<ChildAssetEntry>? ChildAssets { get; set; }
+    }
+
+    private class PartLinkEntry
+    {
+        public string PartNumber { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+    }
+
+    private class ChildAssetEntry
+    {
+        public string ChildAssetName { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+        public string? Notes { get; set; }
     }
 }

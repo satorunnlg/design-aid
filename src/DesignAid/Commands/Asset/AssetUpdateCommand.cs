@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Asset;
 
@@ -99,6 +101,32 @@ public class AssetUpdateCommand : Command
         };
 
         await assetJsonReader.WriteAsync(assetPath, updated);
+
+        // DB も更新
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var dbAsset = await db.Assets.FirstOrDefaultAsync(a => a.Name == name);
+            if (dbAsset != null)
+            {
+                AssetStatus? dbStatus = null;
+                if (status != null && Enum.TryParse<AssetStatus>(status, ignoreCase: true, out var parsed))
+                {
+                    // third_party → ThirdParty への変換
+                    dbStatus = status.ToLowerInvariant() == "third_party" ? AssetStatus.ThirdParty : parsed;
+                }
+                dbAsset.Update(
+                    displayName: displayName,
+                    description: description,
+                    status: dbStatus,
+                    tags: newTags);
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 更新に失敗しました（JSON は更新済み）: {ex.Message}");
+        }
 
         Console.WriteLine($"Asset updated: {name}");
         if (displayName != null) Console.WriteLine($"  DisplayName: {displayName}");

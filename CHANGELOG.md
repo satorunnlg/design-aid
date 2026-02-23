@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3-alpha] - 2026-02-24
+
+### Added
+
+- **CLIコマンドの DB dual-write 対応**
+  - `asset add/update/remove/link/unlink` が JSON と SQLite DB の両方に書き込むように変更
+  - `part add/update/remove/link` が JSON と SQLite DB の両方に書き込むように変更
+  - `daid dashboard` が正しくデータを表示できるようになった
+
+- **`daid sync` の DB 同期機能**
+  - `daid sync` 実行時に assets/ と components/ の全データを DB に UPSERT
+  - 既存の47アセット + パーツを一括で DB に投入可能
+  - `--skip-db` オプションで DB 同期をスキップ可能
+
+- **`CommandHelper.CreateDbContext()` ヘルパーメソッド**
+  - DbContext 生成とマイグレーション自動適用を共通化
+  - SyncCommand のベクトルインデックス同期も統一
+
+### Changed
+
+- `SyncCommand` のベクトルインデックス同期で直接 DbContext を生成していた箇所を `CommandHelper.CreateDbContext()` に統一
+
 ## [0.3.2-alpha] - 2026-02-16
 
 ### Fixed
@@ -224,7 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: Entity Framework Core 10.0 (SQLite)
 - **Vector Search**: 組み込み HNSW（SQLite BLOB + HNSW ライブラリ）
 
-[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.2.0-alpha...HEAD
+[Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...HEAD
+[0.4.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.2-alpha...v0.4.3-alpha
 [0.2.0-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...v0.2.0-alpha
 [0.1.6-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.5-alpha...v0.1.6-alpha
 [0.1.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.0-alpha...v0.1.3-alpha

@@ -1,7 +1,9 @@
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
 using System.Diagnostics;
+using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Asset;
 
@@ -40,6 +42,23 @@ public class AssetAddCommand : Command
         // asset.json を作成
         var assetId = Guid.NewGuid();
         await assetJsonReader.CreateAsync(assetPath, assetId, name, displayName ?? name, description ?? "");
+
+        // DB にも登録
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            var existing = await db.Assets.FirstOrDefaultAsync(a => a.Name == name);
+            if (existing == null)
+            {
+                var asset = Domain.Entities.Asset.Create(name, assetPath, displayName ?? name, description ?? "");
+                db.Assets.Add(asset);
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は作成済み）: {ex.Message}");
+        }
 
         // Git リポジトリを初期化（デフォルト）
         var gitInitialized = false;
