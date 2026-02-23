@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4-alpha] - 2026-02-24
+
+### Fixed
+
+- **ダッシュボードの Blazor 回路エラーを修正**
+  - `AddDbContextFactory` と `AddDbContext` の二重登録による DI スコープ解決エラーを修正
+  - メニュー開閉・フィルター・ダイアログ等のインタラクティブ機能が動作するようになった
+  - 原因: `DbContextOptions` の競合により Blazor SignalR 回路が起動直後に停止していた
+
 ## [0.4.3-alpha] - 2026-02-24
 
 ### Added
@@ -247,6 +256,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Vector Search**: 組み込み HNSW（SQLite BLOB + HNSW ライブラリ）
 
 [Unreleased]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...HEAD
+[0.4.4-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.3-alpha...v0.4.4-alpha
 [0.4.3-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.4.2-alpha...v0.4.3-alpha
 [0.2.0-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.6-alpha...v0.2.0-alpha
 [0.1.6-alpha]: https://github.com/satorunnlg/design-aid/compare/v0.1.5-alpha...v0.1.6-alpha
