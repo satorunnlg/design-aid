@@ -257,7 +257,7 @@ public class DashboardService
             throw new InvalidOperationException(
                 "検索サービスが利用できません。ベクトルインデックスが構築されていない可能性があります。");
 
-        var results = await _searchService.SearchAsync(query, threshold: 0.5, limit: 20, ct: ct);
+        var results = await _searchService.SearchAsync(query, threshold: 0.3, limit: 20, ct: ct);
 
         return results.Select(r => new SearchHitItem
         {
