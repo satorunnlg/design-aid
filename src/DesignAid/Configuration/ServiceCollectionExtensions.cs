@@ -26,13 +26,9 @@ public static class ServiceCollectionExtensions
         string dataDirectory)
     {
         // DbContextFactory（Blazor Server の長期接続対応）
+        // EF Core 7+ では Factory 登録により DesignAidDbContext も Transient として自動登録される
         services.AddDbContextFactory<DesignAidDbContext>(options =>
             options.UseSqlite($"Data Source={dbPath}"));
-
-        // DbContext（Scoped: CLI や短期スコープ用）
-        services.AddDbContext<DesignAidDbContext>(options =>
-            options.UseSqlite($"Data Source={dbPath}"),
-            ServiceLifetime.Scoped);
 
         // Singleton: ステートレス or キャッシュ保持
         services.AddSingleton<IHashService, HashService>();
