@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Text.Json;
 using ModelContextProtocol.Server;
 using DesignAid.Application.Services;
 using DesignAid.Commands;
 using DesignAid.Domain.Entities;
+using DesignAid.Infrastructure.Embedding;
 
 namespace DesignAid.Mcp;
 
@@ -257,23 +259,30 @@ public static class DesignAidMcpTools
         if (!isAvailable)
             return JsonSerializer.Serialize(new { error = "ベクトルインデックスが構築されていません。`daid sync --include-vectors` を実行してください。" }, JsonOptions);
 
-        var searchResults = await searchService.SearchAsync(query, threshold, limit);
-
-        return JsonSerializer.Serialize(new
+        try
         {
-            query,
-            threshold,
-            hits = searchResults.Select(r => new
+            var searchResults = await searchService.SearchAsync(query, threshold, limit);
+
+            return JsonSerializer.Serialize(new
             {
-                r.PartNumber,
-                r.AssetName,
-                r.ProjectName,
-                r.Score,
-                r.Content,
-                r.FilePath
-            }),
-            total = searchResults.Count
-        }, JsonOptions);
+                query,
+                threshold,
+                hits = searchResults.Select(r => new
+                {
+                    r.PartNumber,
+                    r.AssetName,
+                    r.ProjectName,
+                    r.Score,
+                    r.Content,
+                    r.FilePath
+                }),
+                total = searchResults.Count
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, type = ex.GetType().Name }, JsonOptions);
+        }
     }
 
     // ========================================
@@ -321,7 +330,9 @@ public static class DesignAidMcpTools
 
         return JsonSerializer.Serialize(new
         {
-            version = "0.4.6-alpha",
+            version = typeof(DesignAidMcpTools).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion ?? "unknown",
             assetCount = assets.Count,
             partCount = parts.Count,
             vectorSearch = new

@@ -41,6 +41,9 @@ public class McpCommand : Command
             options.LogToStandardErrorThreshold = LogLevel.Trace;
         });
 
+        // DB マイグレーション実行（テーブルが存在することを保証）
+        using (var ctx = CommandHelper.CreateDbContext()) { }
+
         // Design Aid コアサービスを DI 登録
         builder.Services.AddDesignAidServices(dbPath, dataDir);
 
@@ -51,7 +54,7 @@ public class McpCommand : Command
                 options.ServerInfo = new()
                 {
                     Name = "design-aid",
-                    Version = "0.5.2-alpha"
+                    Version = "0.5.3-alpha"
                 };
             })
             .WithStdioServerTransport()
