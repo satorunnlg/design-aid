@@ -33,11 +33,12 @@ public class McpCommand : Command
 
         var builder = Host.CreateApplicationBuilder();
 
-        // MCP サーバーではログを stderr に出力（stdout は MCP 通信に使用）
+        // MCP サーバーではログを stderr に出力（stdout は MCP 通信専用）
         builder.Logging.ClearProviders();
+        builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Logging.AddConsole(options =>
         {
-            options.LogToStandardErrorThreshold = LogLevel.Warning;
+            options.LogToStandardErrorThreshold = LogLevel.Trace;
         });
 
         // Design Aid コアサービスを DI 登録
