@@ -92,7 +92,7 @@ public static class DesignAidMcpTools
 
         var result = parts.Select(p => new
         {
-            p.PartNumber,
+            PartNumber = p.PartNumber.ToString(),
             p.Name,
             Type = p.GetType().Name,
             p.Memo,
