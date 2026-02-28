@@ -49,13 +49,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
             var settings = sp.GetRequiredService<ISettingsService>();
-            var provider = settings.Get("embedding.provider", "Mock");
+            var provider = settings.Get("embedding.provider", "Mock")?.Trim() ?? "Mock";
             var dimensions = settings.GetInt("embedding.dimensions", 384);
-            return provider switch
+            return provider.ToLowerInvariant() switch
             {
-                "OpenAI" => CreateOpenAiProvider(settings),
-                "AzureOpenAI" => CreateAzureOpenAiProvider(settings),
-                "Ollama" => CreateOllamaProvider(settings, dimensions),
+                "openai" => CreateOpenAiProvider(settings),
+                "azureopenai" => CreateAzureOpenAiProvider(settings),
+                "ollama" => CreateOllamaProvider(settings, dimensions),
                 _ => new MockEmbeddingProvider(dimensions)
             };
         });
