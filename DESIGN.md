@@ -2072,7 +2072,7 @@ API キーは以下の優先順序で解決される:
 
 ### 将来拡張予定
 
-- [ ] MCP サーバー対応（`daid mcp` - Claude Desktop 等との連携）→ 下記「MCP サーバー設計検討」参照
+- [x] MCP サーバー対応（`daid mcp` - Claude Code / VS Code 連携）→ 2026-02-28 実装済み（12ツール）
 - [ ] GUI（Avalonia UI）の追加
 - [ ] CAD 連携（DXF/DWG 直接読み込み）
 - [ ] Excel 帳票自動生成
@@ -2094,68 +2094,54 @@ API キーは以下の優先順序で解決される:
 - **プロジェクト分析**: `daid asset analyze <name>` で設定ファイルから言語・フレームワークを自動検出し、テンプレートとの不一致を検出
 - ~~**part 重複検出**~~: → 2026-02-19 実装済み（`daid check --duplicates` で重複 part_number、孤立ディレクトリ、名前不整合を検出）
 
-### MCP サーバー設計検討（2026-02-06 調査）
+### MCP サーバー（2026-02-28 実装済み）
 
-**ステータス**: 実装見送り（C# SDK 安定版リリース待ち）
+**ステータス**: 実装済み（ModelContextProtocol 1.0.0 / 2026-02-25 リリース）
 
-#### MCP (Model Context Protocol) とは
+#### 概要
 
-Anthropic が公開したオープンプロトコル。AI アプリケーション（Claude Desktop、VS Code Copilot 等）と
-外部ツール・データソースを標準化された方法で接続する仕組み。JSON-RPC 2.0 ベース。
-Microsoft、OpenAI、Google DeepMind 等も採用しており、事実上の業界標準。
+`daid mcp` で MCP サーバーを起動し、Claude Code / VS Code から全機能を利用可能。
+STDIO トランスポート、JSON-RPC 2.0 ベース。
 
 #### 技術選定
 
 | 項目 | 選定 | 理由 |
 |------|------|------|
-| SDK | `ModelContextProtocol` (NuGet) | Microsoft + Anthropic 共同メンテナンスの公式 C# SDK |
-| トランスポート | **STDIO** | CLI ツールとの親和性が最も高い。Claude Desktop / VS Code が直接プロセス起動 |
+| SDK | `ModelContextProtocol 1.0.0` (NuGet) | Microsoft + Anthropic 共同メンテナンスの公式 C# SDK |
+| トランスポート | **STDIO** | CLI ツールとの親和性が最も高い |
 | 起動方法 | `daid mcp` サブコマンド | 既存の System.CommandLine 体系と統合 |
 
-**SDK 状況（2026-02-06 時点）**:
-- 最新: `ModelContextProtocol 0.7.0-preview.1`（プレビュー版）
-- 破壊的変更のリスクあり（v0.5.0 で大規模リファクタリング実施済み）
-- 安定版（1.0）リリース後に実装開始を推奨
+#### MCP ツール一覧（12ツール）
 
-#### 公開予定の MCP ツール
+| MCP ツール | 対応サービス | 説明 |
+|-----------|------------|------|
+| `ListAssets` | AssetService | アセット一覧（status/tagフィルタ対応） |
+| `AddAsset` | AssetService | アセット追加 |
+| `ListParts` | PartService | パーツ一覧取得 |
+| `GetPartDetails` | PartService | パーツ詳細情報 |
+| `LinkPartToAsset` | AssetService + PartService | パーツをアセットに紐付け |
+| `CheckIntegrity` | HashService | ハッシュ整合性チェック |
+| `VerifyStandards` | ValidationService | 設計基準バリデーション |
+| `GetAssetParts` | AssetService + PartService | 装置のパーツ情報 |
+| `SearchDesigns` | SearchService | 類似設計ベクトル検索 |
+| `SyncAssets` | SyncService | ファイルシステムとDB同期 |
+| `GetStatus` | 各Service | システム状態取得 |
+| `GetProjectContext` | ファイル読み取り | CLAUDE.md/DESIGN.md 要約を返す |
+| `GetDevCommands` | ファイル読み取り | ビルド/テストコマンド一覧 |
 
-| MCP ツール | 対応 CLI コマンド | 説明 |
-|-----------|-----------------|------|
-| `ListParts` | `daid part list` | パーツ一覧を取得 |
-| `GetPartDetails` | part.json 読み取り | パーツの詳細情報を返却 |
-| `CheckIntegrity` | `daid check` | ハッシュ整合性をチェック |
-| `SearchDesigns` | `daid search` | 類似設計をベクトル検索 |
-| `VerifyStandards` | `daid verify` | 設計基準バリデーション |
-| `GetAssetParts` | `daid asset list --verbose` | 装置に紐づくパーツ情報を取得 |
-| `GetStatus` | `daid status` | システム状態を取得 |
-
-#### 実装構成（予定）
+#### 実装構成
 
 ```
 src/DesignAid/
 ├── Commands/
 │   └── McpCommand.cs             # daid mcp サブコマンド（MCP サーバー起動）
-├── Mcp/                          # MCP サーバー関連
-│   ├── DesignAidMcpTools.cs      # ツール定義（[McpServerToolType]）
-│   ├── DesignAidMcpResources.cs  # リソース定義（パーツ情報等）
-│   └── DesignAidMcpPrompts.cs    # プロンプト定義（設計レビュー等）
+├── Mcp/
+│   └── DesignAidMcpTools.cs      # 全12ツール定義（[McpServerToolType]）
 ```
 
-**追加パッケージ**:
-```bash
-dotnet add src/DesignAid package ModelContextProtocol --prerelease
-```
+#### 設定例
 
-※ `Microsoft.Extensions.Hosting` は既存の DI 構成で対応済み
-
-#### 起動・設定例
-
-```bash
-# MCP サーバーモードで起動
-daid mcp
-```
-
-**Claude Desktop (`claude_desktop_config.json`)**:
+**Claude Code (`.mcp.json`)**:
 ```json
 {
   "mcpServers": {
@@ -2180,17 +2166,11 @@ daid mcp
 }
 ```
 
-#### 実装時の注意事項
+#### 設計メモ
 
-1. **既存サービスの再利用**: `PartService`, `HashService`, `SearchService` 等を DI で注入
-2. **ベクトル検索グレースフルデグラデーション**: ベクトルインデックス未構築時は `SearchDesigns` ツールを無効化し、他ツールは継続
-3. **ログ出力**: STDIO トランスポート使用時、ログは stderr に出力（stdout は MCP 通信に使用）
-4. **将来の HTTP 対応**: チーム共有機能実装時に Streamable HTTP トランスポートを追加検討
-
-#### 実装開始条件
-
-- [ ] `ModelContextProtocol` NuGet パッケージが安定版（1.0 以上）をリリース
-- [ ] MCP 仕様のメジャーバージョンが安定
+1. **既存サービスの再利用**: DI で `PartService`, `HashService`, `SearchService` 等を注入
+2. **ベクトル検索デグラデーション**: インデックス未構築時はエラーメッセージを返却し他ツールは継続
+3. **ログ出力**: STDIO 使用時、ログは stderr に出力（stdout は MCP 通信専用）
 
 ### 関連ドキュメント
 
