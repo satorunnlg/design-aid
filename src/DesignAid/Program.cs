@@ -48,7 +48,10 @@ public class Program
             new DashboardCommand(),
 
             // ツール管理
-            new UpdateCommand()
+            new UpdateCommand(),
+
+            // MCP サーバー（Claude Code / VS Code 連携）
+            new McpCommand()
         };
 
         // バージョン表示
