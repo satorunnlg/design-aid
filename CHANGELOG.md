@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4-alpha] - 2026-05-28
+
+### Fixed
+
+- **write 系コマンド（`asset add`/`update` 等）のハングを修正**
+  - `CommandHelper.CreateDbContext()` が毎回 `Database.Migrate()` を呼んでおり、過去の Migrate 中の異常終了で `__EFMigrationsLock` に残留したロック行があると、EF Core の `SqliteHistoryRepository` がロック取得を無限リトライし、write 系コマンドがハングしていた（読み取り系は `Migrate()` を通らないため影響なし）
+  - 未適用のマイグレーションがある場合のみ `Migrate()` を実行するよう変更し、通常運用（pending なし）ではマイグレーションロックを取得しないようにした
+
 ## [0.4.6-alpha] - 2026-02-24
 
 ### Fixed
