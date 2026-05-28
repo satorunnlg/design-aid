@@ -121,7 +121,7 @@ public static class CommandHelper
     }
 
     /// <summary>
-    /// DbContext を生成して返す。マイグレーションも自動適用する。
+    /// DbContext を生成して返す。未適用のマイグレーションがある場合のみ自動適用する。
     /// 呼び出し元で using / Dispose すること。
     /// </summary>
     public static DesignAidDbContext CreateDbContext()
@@ -130,7 +130,14 @@ public static class CommandHelper
         var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
         optionsBuilder.UseSqlite($"Data Source={dbPath}");
         var context = new DesignAidDbContext(optionsBuilder.Options);
-        context.Database.Migrate();
+        // 未適用のマイグレーションがある場合のみ Migrate を実行する。
+        // Migrate() は毎回 __EFMigrationsLock を取得しに行くため、過去の Migrate 中の
+        // 異常終了で残留したロック行があると SqliteHistoryRepository が無限リトライし、
+        // write 系コマンドがハングする。通常運用（pending なし）では Migrate を呼ばない。
+        if (context.Database.GetPendingMigrations().Any())
+        {
+            context.Database.Migrate();
+        }
         return context;
     }
 
