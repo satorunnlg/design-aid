@@ -54,7 +54,8 @@ public class McpCommand : Command
                 options.ServerInfo = new()
                 {
                     Name = "design-aid",
-                    Version = "0.5.5-alpha"
+                    // 文字列で書かない。csproj の <Version> が正本（AppInfo 参照）
+                    Version = AppInfo.Version
                 };
             })
             .WithStdioServerTransport()
