@@ -188,6 +188,61 @@ invoke_daid "check" "整合性チェック"
 invoke_daid "sync" "同期"
 invoke_daid "verify" "設計基準検証"
 
+# asset.json 欠落の検出と復元（Issue #1）
+# asset list は asset.json しか見ないため、DB にしか無い装置は「存在しないように見える」。
+# **エラーが出ない種類の壊れ方**なので、検出できること自体を検査する。
+GAP_JSON="assets/lifting-unit/asset.json"
+if [ -f "$GAP_JSON" ]; then
+    write_phase "Phase 4b: asset.json 欠落の検出と復元"
+
+    # 削除前の ID を控える。asset add は asset.json と DB へ同じ ID を書くので（Issue #2）、
+    # 復元後にこれと一致すれば「DB の ID を引き継いだ」と言える。
+    ID_BEFORE=$(grep -o '"id": *"[^"]*"' "$GAP_JSON" | head -1 | sed 's/.*"id": *"\([^"]*\)".*/\1/')
+    rm -f "$GAP_JSON"
+
+    set +e
+    LIST_MISSING=$(daid asset list 2>&1)
+    SYNC_DETECT=$(daid sync 2>&1)
+    set -e
+
+    echo "$LIST_MISSING" | grep -q "lifting-unit" \
+        && add_test_result "false" "asset list hides gap" \
+        || add_test_result "true" "asset list hides gap"
+
+    echo "$SYNC_DETECT" | grep -q "JSON MISSING" \
+        && add_test_result "true" "sync gap detect" \
+        || add_test_result "false" "sync gap detect"
+
+    invoke_daid "sync --dry-run --restore-json" "dry-run では復元しない"
+    [ ! -f "$GAP_JSON" ] \
+        && add_test_result "true" "sync gap dryrun no-write" \
+        || add_test_result "false" "sync gap dryrun no-write"
+
+    invoke_daid "sync --restore-json" "asset.json の復元"
+    [ -f "$GAP_JSON" ] \
+        && add_test_result "true" "sync restore-json file" \
+        || add_test_result "false" "sync restore-json file"
+
+    ID_AFTER=$(grep -o '"id": *"[^"]*"' "$GAP_JSON" | head -1 | sed 's/.*"id": *"\([^"]*\)".*/\1/')
+    [ "$ID_AFTER" = "$ID_BEFORE" ] \
+        && add_test_result "true" "sync restore-json keeps db id" \
+        || add_test_result "false" "sync restore-json keeps db id"
+
+    set +e
+    LIST_AFTER=$(daid asset list 2>&1)
+    SYNC_AGAIN=$(daid sync 2>&1)
+    set -e
+
+    echo "$LIST_AFTER" | grep -q "lifting-unit" \
+        && add_test_result "true" "asset list after restore" \
+        || add_test_result "false" "asset list after restore"
+
+    # 冪等（2 回目は検出されない）
+    echo "$SYNC_AGAIN" | grep -q "JSON MISSING" \
+        && add_test_result "false" "sync gap idempotent" \
+        || add_test_result "true" "sync gap idempotent"
+fi
+
 # Phase 5: 検索
 write_phase "Phase 5: 検索"
 

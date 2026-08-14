@@ -421,12 +421,39 @@ design-aid/
   "name": "lifting-unit",
   "display_name": "昇降ユニット",
   "description": "エレベータ更新案件の昇降機構",
+  "status": "active",
+  "tags": ["elevator", "2026"],
   "created_at": "2026-02-02T10:30:00Z"
 }
 ```
 
+`status` は `active` / `dormant` / `archived` / `third_party`。`status` と `tags` は省略可。
+`created_at` は **UTC（末尾 `Z`）** で書く。
+
 **注意**: 部品との紐づけは DB の中間テーブル（AssetComponents）で管理。
-子装置との紐づけは DB の中間テーブル（AssetSubAssets）で管理。
+子装置との紐づけは DB の中間テーブル（AssetSubAssets）と `asset_links.json` の両方に書かれる
+（`asset bom` は `asset_links.json` を読む）。
+
+### asset.json と DB の二重管理（CRITICAL）
+
+**装置の情報は `asset.json` と DB の 2 か所にあり、参照する側が機能ごとに違う。**
+
+| 情報源 | これを読む機能 |
+|--------|---------------|
+| `assets/{name}/asset.json` | `asset list` / `asset bom` / `asset update` |
+| DB の `Assets` テーブル | ベクトル検索・整合性検査・ダッシュボード・MCP |
+
+**片方にしか無い装置が実在しうる。** それぞれの症状と直し方:
+
+| 状態 | 症状 | 直し方 |
+|------|------|--------|
+| DB にあるが `asset.json` が無い | **`asset list` に出ない**（存在しないように見える） | `daid sync --restore-json`、または `daid asset add <name> --no-git` |
+| `asset.json` はあるが DB に行が無い | 一覧には出るが DB 側の機能に載らない | `daid sync`（UPSERT で解消） |
+
+**エラーは出ない。** そのため `sync` が常に前者を `[JSON MISSING]` として報告する。
+
+**ID は両者で一致させる。** `asset add` は 1 つの Guid を採番して両方へ書き、
+`sync --restore-json` は DB の ID をそのまま `asset.json` へ書く。
 
 ### 手配境界（Procurement Boundary）
 
@@ -894,6 +921,21 @@ Asset created: lifting-unit
   Git: initialized
 ```
 
+**ID は asset.json と DB で共通である。**
+装置の情報は `asset.json` と DB の両方に書かれるが、**採番する ID は 1 つ**で、
+`Asset.Create(..., id:)` に渡して両者を揃える。
+（v0.5.4-alpha までは `asset.json` 用と DB 用に別々に `Guid.NewGuid()` していたため、
+同じ装置に ID が 2 つ存在した。）
+
+**DB に行があるのに `asset.json` が無い装置に対しては、復旧経路として働く:**
+
+- 中止条件は「ディレクトリが在り**かつ** `asset.json` が在る」なので、`asset.json` だけ無い場合は通る
+- **DB に既存行があれば、その ID を引き継いで `asset.json` を作り、DB は変更しない**
+- 出力は `Asset json restored: <name>` になる
+- **既存リポジトリでは `--no-git` を付けること**（付けないと `git init` が走る）
+
+`daid sync --restore-json` でも同じ復旧ができる（そちらは一括処理）。
+
 ### daid asset list
 
 登録済み装置を一覧表示する。ステータスやタグによるフィルタリングが可能。
@@ -1204,7 +1246,29 @@ daid sync --include-vectors
 
 # 強制同期（ハッシュを再計算）
 daid sync --force
+
+# DB に行があるのに asset.json が無い装置を、DB の内容から復元する
+daid sync --restore-json
 ```
+
+**同期の向きと、その帰結（重要）:**
+
+`sync` は **`asset.json` → DB の一方向 UPSERT** である。DB 側のレコードを削除することはない
+（`RemoveRange` は `VectorIndex` のみ）。一方で **`asset.json` が無いディレクトリは素通りする**。
+
+その結果、**「DB に行があるのに `asset.json` が無い」装置は sync では直らない**。
+`asset list` / `asset bom` は `asset.json` しか見ないため、この装置は**存在しないように見える**。
+エラーも出ないため気付きにくい。
+
+- `sync` は常にこの欠落を検査し、`[JSON MISSING]` として報告する
+- `--restore-json` を付けると DB の内容から `asset.json` を復元する
+  - **DB は変更しない。** `asset.json` に書く ID は DB の行の ID をそのまま使う
+  - **既存の `asset.json` は絶対に上書きしない**（ファイル側が正本）
+  - ディレクトリ自体が `assets/` に無い装置は対象外（アーカイブ済みを誤報しないため）
+  - `created_at` は UTC で書く（`asset add` と表記を揃えるため）
+- 逆向きの乖離（`asset.json` はあるが DB に行が無い）は通常の `sync` が UPSERT で解消する
+- 復元した `asset.json` は対象リポジトリで**未追跡ファイル**になる。追跡するか
+  `.gitignore` に入れるかを決めること
 
 **ベクトル同期の対象:**
 - **パーツ**: `components/` 以下の全 part.json（名前、種別、メモ、メタデータ）
