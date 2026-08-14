@@ -640,6 +640,33 @@ daid asset remove safety-module
 
 ---
 
+## Phase 10b: MCP プロトコル疎通
+
+**MCP の SDK を更新したら必ず実行する。**
+daid はプロトコルを SDK に任せているため、**ビルドが通ることは「喋れている」ことを
+何も保証しない**。MCP 仕様は `YYYY-MM-DD` 形式で後方非互換の改訂が入る。
+
+```powershell
+.\scripts\test-mcp.ps1
+
+# 期待結果: 5 件すべて成功
+# [OK] server/discover が 2026-07-28 を返す
+# [OK] 新仕様で 13 ツール列挙
+# [OK] 新仕様でツール実行が成功
+# [OK] 旧 initialize が応答する
+# [OK] 旧ハンドシェイクで 13 ツール列挙（後方互換）
+```
+
+手で確かめる場合の注意:
+
+- **2026-07-28 のリクエストは `_meta` に `protocolVersion` と `clientCapabilities` の
+  両方が必須。** 片方だけだと `-32602` で拒否される
+- `server/discover` は初期化なしで呼べる（必須 RPC）
+- サーバーが名乗るバージョンは csproj の `<Version>` 由来（`AppInfo.Version`）。
+  **版上げ後にここが古いままなら、ハードコードが混入している**
+
+---
+
 ## Phase 11: 完全クリーンアップ
 
 ### 11.1 バックアップファイルの削除

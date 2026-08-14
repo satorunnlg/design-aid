@@ -150,19 +150,7 @@ public class UpdateCommand : Command
         }
     }
 
-    private static string GetCurrentVersion()
-    {
-        var version = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion ?? "0.0.0";
-
-        // +metadata を除去
-        var plusIndex = version.IndexOf('+');
-        if (plusIndex >= 0)
-            version = version[..plusIndex];
-
-        return version;
-    }
+    private static string GetCurrentVersion() => AppInfo.Version;
 
     private static bool IsNewerVersion(string current, string latest)
     {

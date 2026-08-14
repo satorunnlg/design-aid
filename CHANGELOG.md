@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-alpha] - 2026-08-15
+
+### Changed
+
+- **MCP の C# SDK を `ModelContextProtocol` 1.0.0 → 2.2.0 へ更新し、現行仕様 2026-07-28 に対応**（#4）
+  - 2026-07-28 は後方非互換の改訂で、`initialize` ハンドシェイクに代わる**リクエスト単位の
+    バージョン折衝**（`_meta` の `io.modelcontextprotocol/protocolVersion`）と、
+    必須 RPC **`server/discover`** が入った。Roots / Sampling / Logging は Deprecated
+  - 従来は SDK 1.0.0 に固定されており、新しいクライアントが旧ハンドシェイクへ
+    落ちてくれることに依存していた
+  - **本リポジトリのコード変更は不要だった**。MCP 面は stdio + 属性ベースのツール定義だけで、
+    `IMcpServer` / Sampling / Roots / Tasks / OAuth / HTTP トランスポートを使っていないため、
+    折衝と後方互換は SDK が担う。ビルド警告（MCP9005 等）も出ていない
+  - 実測で確認: `server/discover` が `supportedVersions: ["2026-07-28"]` を返し、
+    新仕様で 13 ツールの列挙と実行が通る。**旧ハンドシェイク（2025-06-18）でも 13 ツール列挙**
+
+### Fixed
+
+- **MCP サーバーが名乗るバージョンがハードコードされていた**
+  - `McpCommand.cs` の `ServerInfo.Version` が文字列直書きで、**リリースのたびに取り残されていた**
+  - 同じ取得コードが `UpdateCommand` と `DesignAidMcpTools` にも複製されていた
+  - `AppInfo.Version` に集約し、csproj の `<Version>` を唯一の正本にした
+
 ## [0.5.5-alpha] - 2026-08-15
 
 ### Fixed
