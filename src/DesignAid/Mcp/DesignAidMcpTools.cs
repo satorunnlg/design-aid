@@ -330,9 +330,7 @@ public static class DesignAidMcpTools
 
         return JsonSerializer.Serialize(new
         {
-            version = typeof(DesignAidMcpTools).Assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-                ?.InformationalVersion ?? "unknown",
+            version = AppInfo.Version,
             assetCount = assets.Count,
             partCount = parts.Count,
             vectorSearch = new

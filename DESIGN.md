@@ -1778,8 +1778,15 @@ API キーも `daid config set embedding.api_key <key>` で DB に保存され�
 | [docs/TEST_SCENARIO.md](./docs/TEST_SCENARIO.md) | CLI コマンドテストシナリオ（手動・自動共通） |
 | [scripts/test-all.ps1](./scripts/test-all.ps1) | CLI 統合テストスクリプト（Windows PowerShell） |
 | [scripts/test-all.sh](./scripts/test-all.sh) | CLI 統合テストスクリプト（Linux/Mac bash） |
+| [scripts/test-mcp.ps1](./scripts/test-mcp.ps1) | **MCP プロトコル疎通テスト**（stdio で `daid mcp` を叩く） |
 | [scripts/Run-Tests.ps1](./scripts/Run-Tests.ps1) | ユニットテスト実行スクリプト |
 | [scripts/Setup-TestData.ps1](./scripts/Setup-TestData.ps1) | ユニットテスト用サンプルデータ作成 |
+
+**MCP の SDK を更新したら `scripts/test-mcp.ps1` を必ず実行する。**
+MCP 仕様は後方非互換の改訂が入るが、daid はプロトコルを SDK に任せているため、
+**ビルドが通ることは「喋れている」ことを何も保証しない**。
+このスクリプトは `server/discover`・新仕様でのツール列挙と実行・旧ハンドシェイクの
+後方互換を、実際の stdio 通信で検査する。
 
 ### コマンド追加時のテスト要件（CRITICAL）
 
@@ -2160,7 +2167,7 @@ API キーは以下の優先順序で解決される:
 
 ### MCP サーバー（2026-02-28 実装済み）
 
-**ステータス**: 実装済み（ModelContextProtocol 1.0.0 / 2026-02-25 リリース）
+**ステータス**: 実装済み（ModelContextProtocol **2.2.0** / プロトコル **2026-07-28**）
 
 #### 概要
 
@@ -2171,9 +2178,43 @@ STDIO トランスポート、JSON-RPC 2.0 ベース。
 
 | 項目 | 選定 | 理由 |
 |------|------|------|
-| SDK | `ModelContextProtocol 1.0.0` (NuGet) | Microsoft + Anthropic 共同メンテナンスの公式 C# SDK |
+| SDK | `ModelContextProtocol 2.2.0` (NuGet) | Microsoft + Anthropic 共同メンテナンスの公式 C# SDK |
 | トランスポート | **STDIO** | CLI ツールとの親和性が最も高い |
 | 起動方法 | `daid mcp` サブコマンド | 既存の System.CommandLine 体系と統合 |
+
+#### プロトコルバージョン
+
+MCP 仕様は `YYYY-MM-DD` 形式で改訂される。**本サーバーは 2026-07-28 に対応する。**
+
+2026-07-28 は後方非互換の改訂で、主に次が変わった。
+
+- `initialize` ハンドシェイクに代わり、**リクエスト単位のバージョン折衝**
+  （`_meta` の `io.modelcontextprotocol/protocolVersion`）
+- **`server/discover`**（必須 RPC）が、対応プロトコル版・capability・identity を 1 往復で返す
+- Roots / Sampling / Logging が **Deprecated**
+
+**折衝と後方互換は SDK が担う。** 本リポジトリのコードは属性ベースのツール定義だけを持ち、
+プロトコルの詳細に触れていないため、SDK の更新だけで新仕様に追随できる。
+
+`server/discover` の実測応答（`daid mcp` に stdio で問い合わせたもの）:
+
+```json
+{
+  "supportedVersions": ["2026-07-28"],
+  "capabilities": { "logging": {}, "tools": { "listChanged": true } },
+  "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "design-aid", "version": "0.6.0-alpha" } }
+}
+```
+
+**旧ハンドシェイク（`initialize` / 2025-06-18 以前）も引き続き通る。**
+新仕様のリクエストには `_meta` に `protocolVersion` と **`clientCapabilities` の両方が必須**で、
+欠けると `-32602` で拒否される（クライアント実装時の注意点）。
+
+#### サーバーが名乗るバージョン
+
+`ServerInfo.Version` は **csproj の `<Version>` が正本**で、`AppInfo.Version` が
+アセンブリ属性から読み出す。**文字列で書かない** — 0.5.5-alpha までは
+`McpCommand.cs` にハードコードされており、リリースのたびに取り残されていた。
 
 #### MCP ツール一覧（12ツール）
 
