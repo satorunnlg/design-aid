@@ -26,11 +26,12 @@ public class SyncCommand : Command
         this.Add(new Option<bool>("--force", "強制同期（ハッシュを再計算）"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>("--skip-db", "DB同期をスキップ"));
+        this.Add(new Option<bool>("--restore-json", "DB に行があるのに asset.json が無い装置を、DB の内容から復元する"));
 
-        this.Handler = CommandHandler.Create<bool, bool, bool, bool, bool>(Execute);
+        this.Handler = CommandHandler.Create<bool, bool, bool, bool, bool, bool>(Execute);
     }
 
-    private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb)
+    private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb, bool restoreJson)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
@@ -40,7 +41,13 @@ public class SyncCommand : Command
         {
             if (json)
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { success = true, changes = Array.Empty<object>() }));
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    changes = Array.Empty<object>(),
+                    assetJsonGaps = skipDb ? Array.Empty<object>() : FindAssetJsonGaps(assetsDir)
+                        .Select(g => new { name = g.Name, id = g.Id, path = g.DirectoryPath }).ToArray()
+                }));
             }
             else
             {
@@ -51,6 +58,10 @@ public class SyncCommand : Command
             if (!skipDb && !dryRun)
             {
                 SyncToDatabase(assetsDir, null, new PartJsonReader());
+            }
+            if (!skipDb && !json)
+            {
+                ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
             }
             return;
         }
@@ -183,7 +194,9 @@ public class SyncCommand : Command
             {
                 success = true,
                 dryRun,
-                changes
+                changes,
+                assetJsonGaps = skipDb ? Array.Empty<object>() : FindAssetJsonGaps(assetsDir)
+                    .Select(g => new { name = g.Name, id = g.Id, path = g.DirectoryPath }).ToArray()
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
         else
@@ -197,6 +210,11 @@ public class SyncCommand : Command
                 {
                     Console.WriteLine();
                     SyncToDatabase(assetsDir, componentsDir, partJsonReader);
+                }
+
+                if (!skipDb)
+                {
+                    ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
                 }
 
                 // ファイル変更がなくてもベクトルインデックス同期は実行する
@@ -263,6 +281,11 @@ public class SyncCommand : Command
             {
                 Console.WriteLine();
                 SyncToDatabase(assetsDir, componentsDir, partJsonReader);
+            }
+
+            if (!skipDb)
+            {
+                ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
             }
 
             if (includeVectors && !dryRun)
@@ -480,6 +503,77 @@ public class SyncCommand : Command
     /// <summary>
     /// ステータス文字列を AssetStatus に変換する。
     /// </summary>
+    /// <summary>
+    /// 「DB に行があるのに asset.json が無い」装置を洗い出す。
+    /// 検出そのものは <see cref="SyncService.FindAssetJsonGaps"/> が持つ。
+    /// </summary>
+    private static IReadOnlyList<AssetJsonGap> FindAssetJsonGaps(string assetsDir)
+    {
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            return new SyncService(db, new HashService()).FindAssetJsonGaps(assetsDir);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] asset.json の欠落検査に失敗しました: {ex.Message}");
+            return Array.Empty<AssetJsonGap>();
+        }
+    }
+
+    /// <summary>
+    /// 欠落した asset.json を報告し、`restore` が真なら DB の内容から復元する。
+    /// </summary>
+    private static void ReportAssetJsonGaps(string assetsDir, bool restore, bool dryRun)
+    {
+        var gaps = FindAssetJsonGaps(assetsDir);
+        if (gaps.Count == 0) return;
+
+        Console.WriteLine();
+        Console.WriteLine($"[WARN] DB に行があるのに asset.json が無い装置が {gaps.Count} 件あります。");
+        Console.WriteLine("       この状態では daid asset list / asset bom から見えません。");
+
+        foreach (var gap in gaps)
+        {
+            Console.WriteLine($"  [JSON MISSING] {gap.Name}");
+            Console.WriteLine($"      Path: {gap.DirectoryPath}");
+            Console.WriteLine($"      ID:   {gap.Id}");
+        }
+
+        if (!restore)
+        {
+            Console.WriteLine();
+            Console.WriteLine("       復元するには daid sync --restore-json を実行してください。");
+            return;
+        }
+
+        if (dryRun)
+        {
+            Console.WriteLine();
+            Console.WriteLine("       (dry-run: 復元は行われません)");
+            return;
+        }
+
+        int restored;
+        try
+        {
+            using var db = CommandHelper.CreateDbContext();
+            restored = new SyncService(db, new HashService()).RestoreAssetJson(
+                gaps,
+                (name, ex) => Console.Error.WriteLine($"      [ERROR] {name} の復元に失敗しました: {ex.Message}"));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] asset.json の復元に失敗しました: {ex.Message}");
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"       ✓ {restored} 件の asset.json を DB の内容から復元しました。");
+        Console.WriteLine("       復元した asset.json は対象リポジトリで未追跡ファイルになります。");
+        Console.WriteLine("       追跡するか .gitignore に入れるかを決めてください。");
+    }
+
     private static bool TryParseAssetStatus(string status, out AssetStatus result)
     {
         result = status.ToLowerInvariant() switch

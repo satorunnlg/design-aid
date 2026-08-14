@@ -181,4 +181,31 @@ public class AssetTests
         // Assert
         Assert.EndsWith("asset.json", jsonPath);
     }
+
+    [Fact]
+    public void Create_IDを渡すとその値を使う()
+    {
+        // asset.json と DB で同じ ID を使うための入口（Issue #2）。
+        // ここが無いと、1 回の asset add で同じ装置に ID が 2 つできる。
+        // Arrange
+        var id = Guid.NewGuid();
+
+        // Act
+        var asset = Asset.Create("lifting-unit", @"C:\work\test\assets\lifting-unit", id: id);
+
+        // Assert
+        Assert.Equal(id, asset.Id);
+    }
+
+    [Fact]
+    public void Create_ID省略時は毎回別のIDを採番する()
+    {
+        // Act
+        var a = Asset.Create("a", @"C:\work\test\assets\a");
+        var b = Asset.Create("b", @"C:\work\test\assets\b");
+
+        // Assert
+        Assert.NotEqual(Guid.Empty, a.Id);
+        Assert.NotEqual(a.Id, b.Id);
+    }
 }

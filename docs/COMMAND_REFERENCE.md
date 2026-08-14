@@ -465,6 +465,8 @@ daid sync [options]
 | `--dry-run` | 変更内容を表示するのみ（実際の変更なし） |
 | `--include-vectors` | ベクトルインデックスも同期（検索用） |
 | `--force` | 全パーツを強制的に再同期 |
+| `--skip-db` | DB 同期をスキップ（`asset.json` 欠落の検査も行わない） |
+| `--restore-json` | **DB に行があるのに `asset.json` が無い装置を、DB の内容から復元する** |
 | `--json` | JSON 形式で出力 |
 
 **同期内容:**
@@ -474,25 +476,58 @@ daid sync [options]
    - 変更ファイル: ハッシュ値が `part.json` と不一致
    - 削除ファイル: `part.json` に記載あるがファイルなし
 
-2. **ベクトルインデックス同期**（`--include-vectors` 時）
+2. **`asset.json` 欠落の検出**（常時）
+   - **DB に行があるのに `asset.json` が無い装置を `[JSON MISSING]` として報告する**
+   - `--restore-json` を付けると DB の内容から復元する
+
+3. **ベクトルインデックス同期**（`--include-vectors` 時）
    - パーツ情報（名前・種別・メモ・メタデータ）からベクトル生成
    - `VectorIndex` テーブルに保存
    - HNSW グラフを再構築 → `hnsw_index.bin` に書き出し
 
+**`asset.json` 欠落について:**
+
+`daid asset list` / `asset bom` は `asset.json` しか見ないため、
+**DB にしか無い装置は存在しないように見える**。エラーも出ないので気付きにくい。
+古いバージョンで登録した装置や、`asset.json` を誤って消した場合に起きる。
+
+- **通常の `sync` では直らない。** `sync` は `asset.json → DB` の一方向 UPSERT なので、
+  `asset.json` が無いディレクトリは素通りする
+- **復元しても DB は変更しない。** `asset.json` に書く ID は DB の行の ID をそのまま使う
+- **既存の `asset.json` は絶対に上書きしない**（ファイル側が正本）
+- ディレクトリ自体が `assets/` に無い装置は対象外（アーカイブ済みを誤報しないため）
+- 復元した `asset.json` は対象リポジトリで**未追跡ファイル**になる。追跡するか
+  `.gitignore` に入れるかを決めること
+
 **例:**
 
 ```bash
-# 通常の同期
+# 通常の同期（asset.json の欠落も報告される）
 daid sync
 
-# ドライラン（確認のみ）
+# ドライラン（確認のみ。--restore-json を付けても復元しない）
 daid sync --dry-run
+
+# 欠落した asset.json を DB から復元
+daid sync --restore-json
 
 # ベクトルインデックス付き同期
 daid sync --include-vectors
 
 # 全パーツを強制再同期
 daid sync --force
+```
+
+**出力例（欠落あり）:**
+
+```
+[WARN] DB に行があるのに asset.json が無い装置が 1 件あります。
+       この状態では daid asset list / asset bom から見えません。
+  [JSON MISSING] demo
+      Path: C:\work\assets\demo
+      ID:   d7824eb5-87fd-4231-b1d5-ac5ef5e8dbde
+
+       復元するには daid sync --restore-json を実行してください。
 ```
 
 ---
