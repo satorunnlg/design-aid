@@ -107,6 +107,22 @@ function Invoke-Daid {
     return $true
 }
 
+function Get-DaidOutput {
+    <#
+    .SYNOPSIS
+    daid を実行して**出力そのもの**を返す。
+    .DESCRIPTION
+    Invoke-Daid は成否の真偽値しか返さないため、出力内容を検査したい場合はこちらを使う。
+    「エラーは出ないが一覧から消える」型の不具合は、終了コードでは捕まらない。
+    #>
+    param([string]$Arguments)
+
+    if ($UseGlobalTool) {
+        return (& daid $Arguments.Split(' ') 2>&1 | Out-String)
+    }
+    return (& dotnet (@($DaidDll) + $Arguments.Split(' ')) 2>&1 | Out-String)
+}
+
 # テスト結果追跡
 $TestResults = @{
     Passed = 0
@@ -220,6 +236,40 @@ Add-TestResult (Invoke-Daid "status" "ステータス確認") "status"
 Add-TestResult (Invoke-Daid "check" "整合性チェック") "check"
 Add-TestResult (Invoke-Daid "sync" "同期") "sync"
 Add-TestResult (Invoke-Daid "verify" "設計基準検証") "verify"
+
+# asset.json 欠落の検出と復元（Issue #1）
+# asset list は asset.json しか見ないため、DB にしか無い装置は「存在しないように見える」。
+# **エラーが出ない種類の壊れ方**なので、検出できること自体を検査する。
+$gapAssetJson = "assets\lifting-unit\asset.json"
+if (Test-Path $gapAssetJson) {
+    # 削除前の ID を控える。asset add は asset.json と DB へ同じ ID を書くので（Issue #2）、
+    # 復元後にこれと一致すれば「DB の ID を引き継いだ」と言える。
+    $idBefore = (Get-Content $gapAssetJson -Raw | ConvertFrom-Json).id
+    Remove-Item $gapAssetJson -Force
+
+    # 欠落している間は一覧から消える
+    $listWhileMissing = Get-DaidOutput "asset list"
+    Add-TestResult (-not ($listWhileMissing -match "lifting-unit")) "asset list hides gap"
+
+    $syncOutput = Get-DaidOutput "sync"
+    Add-TestResult ($syncOutput -match "JSON MISSING") "sync gap detect"
+
+    Add-TestResult (Invoke-Daid "sync --dry-run --restore-json" "dry-run では復元しない") "sync gap dryrun"
+    Add-TestResult (-not (Test-Path $gapAssetJson)) "sync gap dryrun no-write"
+
+    Add-TestResult (Invoke-Daid "sync --restore-json" "asset.json の復元") "sync restore-json"
+    Add-TestResult (Test-Path $gapAssetJson) "sync restore-json file"
+
+    $restored = Get-Content $gapAssetJson -Raw | ConvertFrom-Json
+    Add-TestResult ($restored.id -eq $idBefore) "sync restore-json keeps db id"
+
+    $listAfter = Get-DaidOutput "asset list"
+    Add-TestResult ($listAfter -match "lifting-unit") "asset list after restore"
+
+    # 冪等（2 回目は検出されない）
+    $syncAgain = Get-DaidOutput "sync"
+    Add-TestResult (-not ($syncAgain -match "JSON MISSING")) "sync gap idempotent"
+}
 
 # Phase 5: 検索
 Write-Phase "Phase 5: 検索"

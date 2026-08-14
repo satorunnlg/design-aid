@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using DesignAid.Domain.Entities;
 using DesignAid.Domain.ValueObjects;
+using DesignAid.Infrastructure.FileSystem;
 using DesignAid.Infrastructure.Persistence;
 using DesignAid.Infrastructure.VectorSearch;
 
@@ -225,7 +226,139 @@ public class SyncService : ISyncService
 
         return string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
     }
+
+    /// <summary>
+    /// 「DB に行があるのに asset.json が無い」装置を洗い出す。
+    /// </summary>
+    /// <param name="assetsDir">装置ディレクトリの親（`assets/`）</param>
+    /// <returns>欠落している装置の一覧。名前順。</returns>
+    /// <remarks>
+    /// <para>
+    /// daid は装置の情報を <c>asset.json</c> と DB の両方に持つが、この 2 つは自動では揃わない。
+    /// <c>asset list</c> / <c>asset bom</c> は <c>asset.json</c> しか見ないため、
+    /// <b>DB にしか無い装置は存在しないように見える</b>（Issue #1）。
+    /// </para>
+    /// <para>
+    /// <b>ディレクトリ自体が <paramref name="assetsDir"/> に無い装置は対象外</b>にする。
+    /// アーカイブ済み（<c>archive/assets/</c> へ移動済み）を欠落と誤報しないためである。
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<AssetJsonGap> FindAssetJsonGaps(string assetsDir)
+    {
+        if (string.IsNullOrWhiteSpace(assetsDir) || !Directory.Exists(assetsDir))
+            return Array.Empty<AssetJsonGap>();
+
+        var assetJsonReader = new AssetJsonReader();
+        var gaps = new List<AssetJsonGap>();
+
+        foreach (var asset in _context.Assets.AsNoTracking().ToList())
+        {
+            var assetDir = Path.Combine(assetsDir, asset.Name);
+            if (!Directory.Exists(assetDir)) continue;
+            if (assetJsonReader.Exists(assetDir)) continue;
+
+            gaps.Add(new AssetJsonGap(
+                asset.Id,
+                asset.Name,
+                assetDir,
+                asset.DisplayName,
+                asset.Description,
+                asset.Status,
+                asset.Tags,
+                asset.CreatedAt));
+        }
+
+        return gaps.OrderBy(g => g.Name, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// 欠落した asset.json を DB の内容から復元する。
+    /// </summary>
+    /// <param name="gaps"><see cref="FindAssetJsonGaps"/> の結果</param>
+    /// <param name="onError">1 件ごとの失敗を受け取るコールバック（装置名, 例外）</param>
+    /// <returns>復元できた件数</returns>
+    /// <remarks>
+    /// <b>既存の asset.json は絶対に上書きしない。</b> 書き込む直前にもう一度存在を確認し、
+    /// 在れば飛ばす。ファイル側が正本である以上、DB の内容で塗り潰してはならない。
+    /// </remarks>
+    public int RestoreAssetJson(
+        IReadOnlyList<AssetJsonGap> gaps,
+        Action<string, Exception>? onError = null)
+    {
+        var assetJsonReader = new AssetJsonReader();
+        var restored = 0;
+
+        foreach (var gap in gaps)
+        {
+            try
+            {
+                // 検出から書き込みまでの間に作られていたら触らない
+                if (assetJsonReader.Exists(gap.DirectoryPath)) continue;
+
+                assetJsonReader.Write(gap.DirectoryPath, new AssetJson
+                {
+                    Id = gap.Id,
+                    Name = gap.Name,
+                    DisplayName = gap.DisplayName,
+                    Description = gap.Description,
+                    Status = ToJsonStatus(gap.Status),
+                    Tags = gap.Tags.Count > 0 ? gap.Tags.ToList() : null,
+                    CreatedAt = ToUtc(gap.CreatedAt)
+                });
+                restored++;
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(gap.Name, ex);
+            }
+        }
+
+        return restored;
+    }
+
+    /// <summary>
+    /// asset.json へ書く日時を UTC に揃える。
+    /// </summary>
+    /// <remarks>
+    /// <c>asset add</c> は <c>DateTime.UtcNow</c> を書くので <c>...Z</c> になるが、
+    /// DB から読み直した値は Kind が落ちるため、そのまま書くとローカルオフセット
+    /// （<c>+09:00</c> 等）で直列化され、<b>同じ意味の値が 2 通りの表記になる</b>。
+    /// 時刻としては等しくても、生成経路によって asset.json の中身が変わるのは避ける。
+    /// </remarks>
+    public static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        // DB には UTC で入れているので、Kind が落ちていれば UTC とみなす
+        DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+        _ => value.ToUniversalTime()
+    };
+
+    /// <summary>
+    /// <see cref="AssetStatus"/> を asset.json の <c>status</c> 文字列へ変換する。
+    /// asset.json 側のパース（<c>SyncCommand.TryParseAssetStatus</c>）と<b>対で保つ</b>。
+    /// </summary>
+    public static string ToJsonStatus(AssetStatus status) => status switch
+    {
+        AssetStatus.Active => "active",
+        AssetStatus.Dormant => "dormant",
+        AssetStatus.Archived => "archived",
+        AssetStatus.ThirdParty => "third_party",
+        _ => "active"
+    };
 }
+
+/// <summary>
+/// DB に行があるのに asset.json が無い装置（Issue #1）。
+/// この状態では <c>daid asset list</c> / <c>asset bom</c> から見えない。
+/// </summary>
+public sealed record AssetJsonGap(
+    Guid Id,
+    string Name,
+    string DirectoryPath,
+    string? DisplayName,
+    string? Description,
+    AssetStatus Status,
+    IReadOnlyList<string> Tags,
+    DateTime CreatedAt);
 
 /// <summary>
 /// 同期結果。

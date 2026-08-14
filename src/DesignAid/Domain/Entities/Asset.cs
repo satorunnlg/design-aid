@@ -78,12 +78,21 @@ public class Asset
     /// <param name="directoryPath">ディレクトリパス</param>
     /// <param name="displayName">表示名</param>
     /// <param name="description">説明</param>
+    /// <param name="id">
+    /// 装置ID。省略時は新規採番する。
+    /// <para>
+    /// <b>asset.json を同時に作る経路では、必ず asset.json と同じ ID を渡すこと。</b>
+    /// 渡さずに採番すると、同じ装置に asset.json 側と DB 側で別々の ID が付き、
+    /// ID を鍵にした突き合わせができなくなる（Issue #2）。
+    /// </para>
+    /// </param>
     /// <returns>Asset インスタンス</returns>
     public static Asset Create(
         string name,
         string directoryPath,
         string? displayName = null,
-        string? description = null)
+        string? description = null,
+        Guid? id = null)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("装置名は必須です", nameof(name));
@@ -95,7 +104,7 @@ public class Asset
 
         return new Asset
         {
-            Id = Guid.NewGuid(),
+            Id = id ?? Guid.NewGuid(),
             Name = name,
             DisplayName = displayName,
             Description = description,

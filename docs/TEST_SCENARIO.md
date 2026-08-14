@@ -149,6 +149,9 @@ daid asset add lifting-unit --display-name "昇降ユニット"
 # - 装置が追加される
 # - assets/lifting-unit/ ディレクトリが作成される
 # - assets/lifting-unit/asset.json が作成される
+# - **表示される ID が asset.json と DB で一致する**（v0.5.5-alpha 以降）
+#   sqlite3 design_aid.db "SELECT Id FROM Assets WHERE Name='lifting-unit';"
+#   と asset.json の "id" が同じであること
 ```
 
 ### 2.3 複数装置の追加
@@ -292,6 +295,50 @@ daid check
 daid sync
 
 # 期待結果: 同期結果が表示される
+# - asset.json が揃っていれば [JSON MISSING] は出ない
+```
+
+### 4.3b asset.json 欠落の検出と復元
+
+`asset list` は `asset.json` しか見ないため、DB にしか無い装置は**存在しないように見える**。
+エラーが出ないので、検出できることを必ず確認する。
+
+```bash
+# 欠落を作る（古いバージョンで登録された装置と同じ状態）
+rm assets/lifting-unit/asset.json          # Windows: Remove-Item assets\lifting-unit\asset.json
+
+daid asset list
+# 期待結果: **lifting-unit が一覧に出ない**
+
+daid sync
+# 期待結果:
+# - [WARN] DB に行があるのに asset.json が無い装置が 1 件あります
+# - [JSON MISSING] lifting-unit （Path と ID が表示される）
+# - 「復元するには daid sync --restore-json」の案内が出る
+
+daid sync --dry-run --restore-json
+# 期待結果: 検出は出るが「(dry-run: 復元は行われません)」となり、**ファイルは作られない**
+
+daid sync --restore-json
+# 期待結果:
+# - 「✓ 1 件の asset.json を DB の内容から復元しました」
+# - assets/lifting-unit/asset.json が作られる
+# - **その "id" が DB の Assets.Id と一致する**
+# - "created_at" が UTC（末尾 Z）である
+
+daid asset list
+# 期待結果: lifting-unit が一覧に復帰する
+
+daid sync
+# 期待結果: [JSON MISSING] が出ない（冪等）
+```
+
+**既存ファイルを上書きしないことの確認:**
+
+```bash
+# asset.json の display_name を手で書き換えてから
+daid sync --restore-json
+# 期待結果: 検出 0 件。手で書いた値がそのまま残る（ファイル側が正本）
 ```
 
 ### 4.4 設計基準検証

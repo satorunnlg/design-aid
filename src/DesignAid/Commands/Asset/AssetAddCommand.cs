@@ -3,6 +3,7 @@ using System.CommandLine.NamingConventionBinder;
 using System.Diagnostics;
 using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.FileSystem;
+using DesignAid.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Commands.Asset;
@@ -39,25 +40,49 @@ public class AssetAddCommand : Command
         // 装置ディレクトリを作成
         Directory.CreateDirectory(assetPath);
 
-        // asset.json を作成
-        var assetId = Guid.NewGuid();
-        await assetJsonReader.CreateAsync(assetPath, assetId, name, displayName ?? name, description ?? "");
-
-        // DB にも登録
+        // **asset.json と DB で同じ ID を使う**（Issue #2）。
+        // そのために DB を先に見る。既に行があればその ID を引き継ぐ。
+        // これは「DB には行があるが asset.json が無い」装置を復旧する経路でもある（Issue #1）。
+        DesignAidDbContext? db = null;
+        Domain.Entities.Asset? existing = null;
         try
         {
-            using var db = CommandHelper.CreateDbContext();
-            var existing = await db.Assets.FirstOrDefaultAsync(a => a.Name == name);
-            if (existing == null)
-            {
-                var asset = Domain.Entities.Asset.Create(name, assetPath, displayName ?? name, description ?? "");
-                db.Assets.Add(asset);
-                await db.SaveChangesAsync();
-            }
+            db = CommandHelper.CreateDbContext();
+            existing = await db.Assets.FirstOrDefaultAsync(a => a.Name == name);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は作成済み）: {ex.Message}");
+            // DB が読めなくても asset.json は作る（従来の挙動を維持する）
+            Console.Error.WriteLine($"[WARN] DB を参照できませんでした（JSON のみ作成します）: {ex.Message}");
+        }
+
+        var assetId = existing?.Id ?? Guid.NewGuid();
+        var reusedDbRow = existing != null;
+
+        try
+        {
+            // asset.json を作成
+            await assetJsonReader.CreateAsync(assetPath, assetId, name, displayName ?? name, description ?? "");
+
+            // DB にも登録（既存行があれば触らない）
+            if (db != null && existing == null)
+            {
+                try
+                {
+                    var asset = Domain.Entities.Asset.Create(
+                        name, assetPath, displayName ?? name, description ?? "", assetId);
+                    db.Assets.Add(asset);
+                    await db.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[WARN] DB 登録に失敗しました（JSON は作成済み）: {ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            db?.Dispose();
         }
 
         // Git リポジトリを初期化（デフォルト）
@@ -68,9 +93,13 @@ public class AssetAddCommand : Command
         }
 
         Console.WriteLine();
-        Console.WriteLine($"Asset created: {name}");
+        Console.WriteLine(reusedDbRow ? $"Asset json restored: {name}" : $"Asset created: {name}");
         Console.WriteLine($"  Path: {assetPath}");
         Console.WriteLine($"  ID: {assetId}");
+        if (reusedDbRow)
+        {
+            Console.WriteLine("  DB: 既存の行を再利用しました（ID を引き継ぎ、DB は変更していません）");
+        }
         if (gitInitialized)
         {
             Console.WriteLine($"  Git: initialized");

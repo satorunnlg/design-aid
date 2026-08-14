@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5-alpha] - 2026-08-15
+
+### Fixed
+
+- **`asset add` が同じ装置に ID を 2 つ採番していた問題を修正**（#2）
+  - `asset.json` 用に `Guid.NewGuid()`、DB 用に `Asset.Create()` が別の Guid を採番しており、
+    同じ装置の ID が参照先によって変わっていた。コンソールに出るのは `asset.json` 側だけなので気付けなかった
+  - `Asset.Create(..., id:)` を追加し、1 つの Guid を両方へ書くようにした
+
+### Added
+
+- **`asset.json` と DB の乖離を検出・復旧できるようにした**（#1）
+  - `asset list` / `asset bom` は `asset.json` しか見ないため、**DB にしか無い装置は
+    存在しないように見える**。エラーも出ず、通常の `sync` でも直らなかった
+    （`sync` は `asset.json → DB` の一方向 UPSERT で、`asset.json` が無いディレクトリを素通りする）
+  - `daid sync` が常にこの欠落を検査し、`[JSON MISSING]` として報告するようにした
+  - `daid sync --restore-json` で DB の内容から `asset.json` を復元できるようにした
+    - **DB は変更しない**。`asset.json` に書く ID は DB の行の ID をそのまま使う
+    - **既存の `asset.json` は上書きしない**（ファイル側が正本）
+    - ディレクトリが `assets/` に無い装置は対象外（アーカイブ済みを誤報しないため）
+    - `created_at` は UTC で書き、`asset add` と表記を揃える
+  - `daid asset add <name> --no-git` も、DB に既存行があればその ID を引き継いで
+    `asset.json` だけを作る復旧経路として働く（出力は `Asset json restored:`）
+  - `sync --json` の出力に `assetJsonGaps` を追加
+
 ## [0.5.4-alpha] - 2026-05-28
 
 ### Fixed

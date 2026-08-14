@@ -54,7 +54,7 @@ public class McpCommand : Command
                 options.ServerInfo = new()
                 {
                     Name = "design-aid",
-                    Version = "0.5.4-alpha"
+                    Version = "0.5.5-alpha"
                 };
             })
             .WithStdioServerTransport()
