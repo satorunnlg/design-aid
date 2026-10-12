@@ -105,3 +105,7 @@ migration.sql
 # Claude Code
 .claude/
 nupkg/
+
+# エージェント向けの指示ファイルは公開リポジトリに含めない（手元にだけ置く）
+CLAUDE.md
+AGENTS.md
