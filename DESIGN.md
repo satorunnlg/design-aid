@@ -2202,7 +2202,7 @@ MCP 仕様は `YYYY-MM-DD` 形式で改訂される。**本サーバーは 2026-
 {
   "supportedVersions": ["2026-07-28"],
   "capabilities": { "logging": {}, "tools": { "listChanged": true } },
-  "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "design-aid", "version": "0.6.0-alpha" } }
+  "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "design-aid", "version": "0.6.1-alpha" } }
 }
 ```
 
