@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP `GetProjectContext` が AGENTS.md に対応。指示ファイルは AGENTS.md を優先し、無ければ CLAUDE.md を読む
+  （移行済みアセットで言語ルールが空になっていた）。読んだファイルを返り値 `instructionsFile` に追加。
+  `hasClaude` は互換のため残し、意味を「指示ファイルがある」とした
+
 ## [0.6.0-alpha] - 2026-08-15
 
 ### Changed
