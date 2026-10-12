@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1-alpha] - 2026-10-12
+
 ### Fixed
 
 - MCP `GetProjectContext` が AGENTS.md に対応。指示ファイルは AGENTS.md を優先し、無ければ CLAUDE.md を読む
