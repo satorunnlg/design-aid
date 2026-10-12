@@ -345,7 +345,7 @@ public static class DesignAidMcpTools
     // プロジェクトコンテキスト（新規）
     // ========================================
 
-    [McpServerTool, Description("プロジェクトの CLAUDE.md と DESIGN.md を解析し、開発に必要なコンテキスト（技術スタック、開発コマンド、概要）を構造化して返す。")]
+    [McpServerTool, Description("プロジェクトの指示ファイル（AGENTS.md を優先、無ければ CLAUDE.md）と DESIGN.md を解析し、開発に必要なコンテキスト（技術スタック、開発コマンド、概要）を構造化して返す。")]
     public static async Task<string> GetProjectContext(
         IAssetService assetService,
         [Description("装置名（プロジェクト名）")] string assetName)
@@ -355,14 +355,17 @@ public static class DesignAidMcpTools
             return JsonSerializer.Serialize(new { error = $"装置 '{assetName}' が見つかりません" }, JsonOptions);
 
         var assetPath = asset.DirectoryPath;
+        var agentsMdPath = Path.Combine(assetPath, "AGENTS.md");
         var claudeMdPath = Path.Combine(assetPath, "CLAUDE.md");
         var designMdPath = Path.Combine(assetPath, "DESIGN.md");
 
-        string? claudeContent = null;
+        string? instructionsContent = null;
         string? designContent = null;
 
-        if (File.Exists(claudeMdPath))
-            claudeContent = await File.ReadAllTextAsync(claudeMdPath);
+        // 指示ファイルは AGENTS.md を優先し、無ければ CLAUDE.md を読む
+        var instructionsFile = SelectInstructionsFile(File.Exists(agentsMdPath), File.Exists(claudeMdPath));
+        if (instructionsFile != null)
+            instructionsContent = await File.ReadAllTextAsync(instructionsFile == "AGENTS.md" ? agentsMdPath : claudeMdPath);
         if (File.Exists(designMdPath))
             designContent = await File.ReadAllTextAsync(designMdPath);
 
@@ -372,8 +375,8 @@ public static class DesignAidMcpTools
         var overview = ExtractSection(designContent, "概要") ?? ExtractSection(designContent, "Overview");
         var dirStructure = ExtractSection(designContent, "ディレクトリ構造") ?? ExtractSection(designContent, "Directory Structure");
 
-        // CLAUDE.md から言語ルールを抽出
-        var languageRules = ExtractLanguageRules(claudeContent);
+        // 指示ファイルから言語ルールを抽出
+        var languageRules = ExtractLanguageRules(instructionsContent);
 
         // TL;DR（先頭の概要セクションまたは最初の200文字）
         var tldr = GenerateTldr(overview, techStack);
@@ -383,7 +386,9 @@ public static class DesignAidMcpTools
             name = asset.Name,
             displayName = asset.DisplayName,
             path = assetPath,
-            hasClaude = claudeContent != null,
+            // 互換のため名称は据え置き。意味は「指示ファイル（AGENTS.md / CLAUDE.md）がある」
+            hasClaude = instructionsFile != null,
+            instructionsFile,
             hasDesign = designContent != null,
             tldr,
             language = languageRules,
@@ -461,7 +466,14 @@ public static class DesignAidMcpTools
     }
 
     /// <summary>
-    /// CLAUDE.md から言語固有ルールのセクション名を検出する。
+    /// 読み込む指示ファイルを決める（AGENTS.md 優先、無ければ CLAUDE.md、どちらも無ければ null）。
+    /// ファイル I/O を伴わない純関数。
+    /// </summary>
+    public static string? SelectInstructionsFile(bool agentsExists, bool claudeExists)
+        => agentsExists ? "AGENTS.md" : claudeExists ? "CLAUDE.md" : null;
+
+    /// <summary>
+    /// 指示ファイル（AGENTS.md / CLAUDE.md）から言語固有ルールのセクション名を検出する。
     /// </summary>
     private static string? ExtractLanguageRules(string? content)
     {
