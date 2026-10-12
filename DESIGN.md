@@ -2231,7 +2231,7 @@ MCP 仕様は `YYYY-MM-DD` 形式で改訂される。**本サーバーは 2026-
 | `SearchDesigns` | SearchService | 類似設計ベクトル検索 |
 | `SyncAssets` | SyncService | ファイルシステムとDB同期 |
 | `GetStatus` | 各Service | システム状態取得 |
-| `GetProjectContext` | ファイル読み取り | CLAUDE.md/DESIGN.md 要約を返す |
+| `GetProjectContext` | ファイル読み取り | AGENTS.md（無ければ CLAUDE.md）/DESIGN.md 要約を返す。読んだ指示ファイルは `instructionsFile` で返す |
 | `GetDevCommands` | ファイル読み取り | ビルド/テストコマンド一覧 |
 
 #### 実装構成
