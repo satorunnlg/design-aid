@@ -762,6 +762,183 @@ public class AssetRenameServiceTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    // ---- Codex 2 周目の指摘への検査 ----
+
+    private static VectorIndexEntry VecRow(Guid aid, string aname, string type = "asset_doc") => new()
+    {
+        PartId = Guid.NewGuid().ToString(),
+        PartNumber = $"[DOC] {aname}/DESIGN.md",
+        Content = "c",
+        Embedding = new byte[] { 1 },
+        Dimensions = 1,
+        AssetId = aid.ToString(),
+        AssetName = aname,
+        Type = type,
+        FilePath = $"assets/{aname}/DESIGN.md",
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow
+    };
+
+    [Fact]
+    public async Task Rename_参照を持つzipが開かれていて検査できない_何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        var zip = WriteArchiveZip("parent", """{"child_assets":[{"child_asset_name":"old","quantity":1}]}""");
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+
+        AssetRenameResult r;
+        using (new FileStream(zip, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            r = await RenameAsync("old", "new");
+        }
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("検査できないアーカイブ") && e.Contains("parent"));
+        Assert.Equal(files, SnapshotRoot());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_壊れたzipがある_検査できないので何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        Directory.CreateDirectory(Path.Combine(_root, "archive", "assets"));
+        await File.WriteAllBytesAsync(Path.Combine(_root, "archive", "assets", "broken.zip"), new byte[] { 1, 2, 3, 4, 5 });
+        var files = SnapshotRoot();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("検査できないアーカイブ"));
+        Assert.Equal(files, SnapshotRoot());
+    }
+
+    [Fact]
+    public async Task Rename_読める無関係なzipは_別のzipが開かれていなくても改名を妨げない()
+    {
+        await AddAssetAsync("old");
+        WriteArchiveZip("readable", """{"child_assets":[{"child_asset_name":"unrelated","quantity":1}]}""");
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    [Fact]
+    public async Task Rename_Assetsに行が無いJSONだけの装置でも_文書索引を更新しAssetsの行は作らない()
+    {
+        var jsonId = await AddAssetAsync("old", inDb: false);
+        var otherId = Guid.NewGuid();
+        using (var db = NewDb())
+        {
+            db.VectorIndex.AddRange(VecRow(jsonId, "old"), VecRow(otherId, "other"));
+            await db.SaveChangesAsync();
+        }
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        Assert.Equal(1, r.VectorRowsUpdated);
+        using var check = NewDb();
+        Assert.False(await check.Assets.AnyAsync()); // Assets の行は新しく作らない
+        var rows = await check.VectorIndex.AsNoTracking().OrderBy(v => v.Id).ToListAsync();
+        Assert.Equal("new", rows[0].AssetName);
+        Assert.Equal("[DOC] new/DESIGN.md", rows[0].PartNumber);
+        Assert.Equal("assets/new/DESIGN.md", rows[0].FilePath);
+        Assert.Equal("other", rows[1].AssetName);
+    }
+
+    [Fact]
+    public async Task Rename_JSONだけの装置の索引更新が失敗したら_索引もフォルダも戻る()
+    {
+        var jsonId = await AddAssetAsync("old", inDb: false);
+        using (var db = NewDb())
+        {
+            db.VectorIndex.Add(VecRow(jsonId, "old"));
+            await db.SaveChangesAsync();
+        }
+        var files = SnapshotFiles();
+
+        var r = await RenameAsync("old", "new",
+            step => step == "after-db-save" ? throw new InvalidOperationException("注入した失敗") : Task.CompletedTask);
+
+        Assert.False(r.Success);
+        Assert.Equal(files, SnapshotFiles());
+        using var check = NewDb();
+        var row = await check.VectorIndex.AsNoTracking().SingleAsync();
+        Assert.Equal("old", row.AssetName);
+        Assert.Equal("assets/old/DESIGN.md", row.FilePath);
+    }
+
+    [Fact]
+    public async Task Rename_asset_jsonのnameが旧名と違う_補正せずファイルもDBも索引も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        var otherId = await AddAssetAsync("other");
+        using (var db = NewDb())
+        {
+            db.VectorIndex.Add(VecRow(otherId, "other"));
+            await db.SaveChangesAsync();
+        }
+        // assets/old/asset.json を別装置 other のコピーにする
+        File.Copy(Path.Combine(_assetsDir, "other", "asset.json"), Path.Combine(_assetsDir, "old", "asset.json"), true);
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+        List<(string, string?, string?)> Vec()
+        {
+            using var d = NewDb();
+            return d.VectorIndex.AsNoTracking().OrderBy(v => v.Id).AsEnumerable()
+                .Select(v => (v.AssetName ?? "", v.PartNumber, v.FilePath)).ToList()!;
+        }
+        var vec = Vec();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("asset.json の name") && e.Contains("other"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        Assert.Equal(vec, Vec());
+    }
+
+    [Theory]
+    [InlineData("dir")]
+    [InlineData("jsondir")]
+    [InlineData("file")]
+    public async Task Rename_新名と大小文字だけ違うものがassets直下にある_何も変えずに止める(string kind)
+    {
+        await AddAssetAsync("old");
+        var path = Path.Combine(_assetsDir, "NEW");
+        if (kind == "file") await File.WriteAllTextAsync(path, "x");
+        else
+        {
+            Directory.CreateDirectory(path);
+            if (kind == "jsondir") await _json.CreateAsync(path, Guid.NewGuid(), "NEW");
+        }
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.NotEmpty(r.Errors);
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_新名と別の名前のものがあっても_妨げない()
+    {
+        await AddAssetAsync("old");
+        Directory.CreateDirectory(Path.Combine(_assetsDir, "new-x"));
+        await File.WriteAllTextAsync(Path.Combine(_assetsDir, "new.txt"), "x");
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
     // ---- asset.json の往復（previous_names を落とさない）----
 
     [Fact]

@@ -81,7 +81,6 @@ public class AssetRenameService
         // 大小文字だけ違う名前: asset.json の name、DB の Name、assets/ の別のディレクトリ
         bool Variant(string? n) => n != null && n != oldName && string.Equals(n, oldName, StringComparison.OrdinalIgnoreCase);
         var variants = new List<string>();
-        if (Variant(json?.Name)) variants.Add(json!.Name);
         variants.AddRange(allNames.Where(Variant));
         if (Directory.Exists(assetsDir))
             variants.AddRange(Directory.GetDirectories(assetsDir).Select(d => Path.GetFileName(d)).Where(Variant));
@@ -90,7 +89,13 @@ public class AssetRenameService
         // アーカイブ（archive_index.json と archive/assets/*.zip）
         var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
         var archived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), oldName);
-        var referencing = FindArchivesReferencing(Path.Combine(dataDir, "archive", "assets"), oldName);
+        var (referencing, unreadableArchives) = FindArchivesReferencing(Path.Combine(dataDir, "archive", "assets"), oldName);
+
+        // 新名と大小文字だけ違うもの（assets/ 直下のディレクトリ・ファイル）。大小文字を区別する環境で、別の装置を作ってしまわないため
+        var newCollisions = Directory.Exists(assetsDir)
+            ? Directory.GetFileSystemEntries(assetsDir).Select(e => Path.GetFileName(e))
+                .Where(n => n != newName && string.Equals(n, newName, StringComparison.OrdinalIgnoreCase)).ToList()
+            : new List<string>();
 
         var facts = new AssetRenamePlanner.Facts(
             OldName: oldName,
@@ -104,7 +109,10 @@ public class AssetRenameService
             OldDirOutsideAssets: false,
             OldArchived: archived,
             OldCaseVariants: variants,
-            ArchivesReferencingOld: referencing);
+            ArchivesReferencingOld: referencing,
+            UnreadableArchives: unreadableArchives,
+            OldAssetJsonName: json?.Name,
+            NewFsCaseCollisions: newCollisions);
 
         var errors = AssetRenamePlanner.CheckPreconditions(facts);
         if (errors.Count > 0)
@@ -229,24 +237,28 @@ public class AssetRenameService
             await RunHookAsync("after-links");
 
             // 2-4. DB（トランザクション。ID は変えない）
-            if (dbAsset != null)
+            // Assets の行が無い（asset.json だけの）装置でも、asset.json の ID の文書索引は更新する。Assets の行は作らない
+            if (dbAsset != null || json != null)
             {
                 await using var tx = await _db.Database.BeginTransactionAsync(ct);
                 try
                 {
-                    var idText = dbAsset.Id.ToString();
-                    dbAsset.Rename(
-                        newName,
-                        newDir,
-                        AssetRenamePlanner.ResolveDisplayName(dbAsset.DisplayName, oldName, newName),
-                        previousNames);
-                    result.DisplayName ??= dbAsset.DisplayName;
+                    if (dbAsset != null)
+                    {
+                        dbAsset.Rename(
+                            newName,
+                            newDir,
+                            AssetRenamePlanner.ResolveDisplayName(dbAsset.DisplayName, oldName, newName),
+                            previousNames);
+                        result.DisplayName ??= dbAsset.DisplayName;
+                    }
 
                     // ベクトル索引は装置を名前とパスで持っている（ID でも引けるが、表示と検索の元は名前）
                     // 文書索引は asset.json の ID で登録される（CollectAssetDocPoints）ので、DB の ID と asset.json の ID の両方を対象にする。
                     // それ以外の行（別の装置・アーカイブ済み）は巻き込まない
-                    var targetIds = new List<string> { idText };
-                    if (json != null && json.Id != dbAsset.Id) targetIds.Add(json.Id.ToString());
+                    var targetIds = new List<string>();
+                    if (dbAsset != null) targetIds.Add(dbAsset.Id.ToString());
+                    if (json != null && json.Id != dbAsset?.Id) targetIds.Add(json.Id.ToString());
                     var vectorRows = await _db.VectorIndex.Where(v => v.AssetId != null && targetIds.Contains(v.AssetId)).ToListAsync(ct);
                     foreach (var v in vectorRows)
                     {
@@ -263,7 +275,7 @@ public class AssetRenameService
                     await _db.SaveChangesAsync(ct);
                     await RunHookAsync("after-db-save");
                     await tx.CommitAsync(ct);
-                    result.DbUpdated = true;
+                    result.DbUpdated = dbAsset != null;
                 }
                 catch
                 {
@@ -274,7 +286,8 @@ public class AssetRenameService
                     throw;
                 }
             }
-            else
+
+            if (dbAsset == null)
             {
                 result.Warnings.Add("DB に行がありません（asset.json のみの装置）。DB へ登録するには daid sync を実行してください");
             }
@@ -321,10 +334,12 @@ public class AssetRenameService
     /// アーカイブ（zip）の中の asset_links.json が、この名前を子装置として参照している親装置の名前。
     /// 参照の無いアーカイブは含めない。読めない zip は飛ばす。
     /// </summary>
-    private static List<string> FindArchivesReferencing(string archiveAssetsDir, string name)
+    private static (List<string> Referencing, List<string> Unreadable) FindArchivesReferencing(
+        string archiveAssetsDir, string name)
     {
         var found = new List<string>();
-        if (!Directory.Exists(archiveAssetsDir)) return found;
+        var unreadable = new List<string>();
+        if (!Directory.Exists(archiveAssetsDir)) return (found, unreadable);
 
         foreach (var zip in Directory.GetFiles(archiveAssetsDir, "*.zip").OrderBy(z => z, StringComparer.Ordinal))
         {
@@ -335,15 +350,20 @@ public class AssetRenameService
                     string.Equals(e.FullName, AssetLinksFileName, StringComparison.OrdinalIgnoreCase));
                 if (entry == null) continue;
                 using var reader = new StreamReader(entry.Open());
-                var (_, count) = AssetRenamePlanner.RenameChildReferences(reader.ReadToEnd(), name, name + "_");
+                var text = reader.ReadToEnd();
+                var (_, count) = AssetRenamePlanner.RenameChildReferences(text, name, name + "_");
                 if (count > 0) found.Add(Path.GetFileNameWithoutExtension(zip));
+                else if (text.Contains(name, StringComparison.OrdinalIgnoreCase) && !IsParsable(text))
+                    unreadable.Add(zip); // 読めない JSON に旧名が書かれている
             }
-            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                           or InvalidDataException or NotSupportedException)
             {
-                // 壊れた zip は判定できないので飛ばす
+                // 検査できないアーカイブは「参照なし」とみなさない。改名を止める理由にする
+                unreadable.Add(zip);
             }
         }
-        return found;
+        return (found, unreadable);
     }
 
     private Task RunHookAsync(string step) => StepHook?.Invoke(step) ?? Task.CompletedTask;

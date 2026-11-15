@@ -206,6 +206,32 @@ public class AssetRenamePlannerTests
         Assert.False(AssetRenamePlanner.IsDirectChildOf(assets, Path.Combine(Path.GetTempPath(), "elsewhere", "old")));
     }
 
+    [Fact]
+    public void CheckPreconditions_検査できないアーカイブ_パスを出して止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { UnreadableArchives = new[] { "x/broken.zip" } });
+        Assert.Single(errors);
+        Assert.Contains("broken.zip", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_asset_jsonのnameが旧名と違う_止める_一致なら通る()
+    {
+        var bad = AssetRenamePlanner.CheckPreconditions(Ok() with { OldAssetJsonName = "other" });
+        Assert.Single(bad);
+        Assert.Contains("other", bad[0]);
+        Assert.Empty(AssetRenamePlanner.CheckPreconditions(Ok() with { OldAssetJsonName = "old" }));
+    }
+
+    [Fact]
+    public void CheckPreconditions_新名と大小文字だけ違うものがある_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { NewFsCaseCollisions = new[] { "NEW" } });
+        Assert.Single(errors);
+        Assert.Contains("NEW", errors[0]);
+        Assert.Empty(AssetRenamePlanner.CheckPreconditions(Ok() with { NewFsCaseCollisions = Array.Empty<string>() }));
+    }
+
     // ---- UpdatePreviousNames ----
 
     [Fact]

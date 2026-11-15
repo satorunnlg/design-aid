@@ -65,7 +65,10 @@ public static class AssetRenamePlanner
         bool OldDirOutsideAssets = false,
         bool OldArchived = false,
         IReadOnlyList<string>? OldCaseVariants = null,
-        IReadOnlyList<string>? ArchivesReferencingOld = null);
+        IReadOnlyList<string>? ArchivesReferencingOld = null,
+        IReadOnlyList<string>? UnreadableArchives = null,
+        string? OldAssetJsonName = null,
+        IReadOnlyList<string>? NewFsCaseCollisions = null);
 
     /// <summary>
     /// <paramref name="path"/> を正規化した親が <paramref name="assetsDir"/> と一致するか（assets 直下か）。
@@ -129,6 +132,17 @@ public static class AssetRenamePlanner
         // 補正すると DB の更新を迂回したり、別の装置を巻き込んだりする。
         if (f.OldCaseVariants is { Count: > 0 })
             errors.Add($"旧名 '{f.OldName}' と大文字小文字だけが違う名前の装置があります: {string.Join(", ", f.OldCaseVariants)}（正しい名前をそのまま指定してください。別の装置の場合は改名できません）");
+
+        // asset.json があるなら、その name が旧名と完全に一致することを必須にする（別装置の asset.json のコピーなどを巻き込まない）
+        if (f.OldHasAssetJson && !f.OldAssetJsonUnreadable && f.OldAssetJsonName != null
+            && !string.Equals(f.OldAssetJsonName, f.OldName, StringComparison.Ordinal))
+            errors.Add($"asset.json の name '{f.OldAssetJsonName}' が旧名 '{f.OldName}' と一致しません（補正せずに止めます。asset.json か指定した名前を確認してください）");
+
+        if (f.NewFsCaseCollisions is { Count: > 0 })
+            errors.Add($"新しい名前と大文字小文字だけが違うものが assets/ にあります: {string.Join(", ", f.NewFsCaseCollisions)}");
+
+        if (f.UnreadableArchives is { Count: > 0 })
+            errors.Add($"検査できないアーカイブがあります（子装置の参照を確認できないため改名できません）: {string.Join(", ", f.UnreadableArchives)}");
 
         if (f.OldArchived)
             errors.Add($"改名元の装置はアーカイブ済みです: {f.OldName}（先に daid archive restore asset {f.OldName} で復元してください）");
