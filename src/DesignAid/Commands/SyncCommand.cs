@@ -337,6 +337,10 @@ public class SyncCommand : Command
                         {
                             dbAsset.Update(tags: assetJson.Tags);
                         }
+                        if (assetJson.PreviousNames != null && assetJson.PreviousNames.Count > 0)
+                        {
+                            dbAsset.Update(previousNames: assetJson.PreviousNames);
+                        }
                         db.Assets.Add(dbAsset);
                         assetCount++;
                     }
@@ -352,7 +356,8 @@ public class SyncCommand : Command
                             displayName: assetJson.DisplayName,
                             description: assetJson.Description,
                             status: newStatus,
-                            tags: assetJson.Tags);
+                            tags: assetJson.Tags,
+                            previousNames: assetJson.PreviousNames);
                         dbAsset.UpdatePath(assetDir);
                     }
                 }

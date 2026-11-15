@@ -20,7 +20,28 @@ public class AssetAddCommand : Command
         this.Add(new Option<string?>("--description", "説明"));
         this.Add(new Option<bool>("--no-git", "Git リポジトリを初期化しない"));
 
-        this.Handler = CommandHandler.Create<string, string?, string?, bool>(ExecuteAsync);
+        this.Handler = CommandHandler.Create<string, string?, string?, bool>(ExecuteWithNameCheckAsync);
+    }
+
+    /// <summary>
+    /// 装置名を検査してから <see cref="ExecuteAsync"/> を呼ぶ。
+    /// 装置名はそのままフォルダ名になるので、asset rename と同じ検査を通す。
+    /// 検査の失敗は終了コード 2 を<b>戻り値で</b>返す（Task のハンドラの Environment.ExitCode は
+    /// System.CommandLine の呼び出しに拾われないため）。以降の挙動は従来のまま。
+    /// </summary>
+    private static async Task<int> ExecuteWithNameCheckAsync(
+        string name, string? displayName, string? description, bool noGit)
+    {
+        var nameError = DesignAid.Application.Services.AssetRenamePlanner.ValidateName(name);
+        if (nameError != null)
+        {
+            Console.Error.WriteLine($"[ERROR] 装置名が使えません: {nameError}");
+            Environment.ExitCode = 2;
+            return 2;
+        }
+
+        await ExecuteAsync(name, displayName, description, noGit);
+        return 0;
     }
 
     private static async Task ExecuteAsync(string name, string? displayName, string? description, bool noGit)

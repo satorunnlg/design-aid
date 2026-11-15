@@ -255,6 +255,59 @@ daid asset remove <name> [options]
 |-----------|------|
 | `--force` | 確認プロンプトをスキップ |
 
+#### asset rename
+
+装置の名前を変える。**ID は変えない**（asset.json と DB の両方で同じ ID のまま、名前だけを変える）。
+
+```
+daid asset rename <old-name> <new-name> [options]
+```
+
+| 引数/オプション | 説明 |
+|----------------|------|
+| `<old-name>` | 現在の装置名 |
+| `<new-name>` | 新しい装置名（`asset add` と同じ名前の検査を通ること） |
+| `--json` | JSON 形式で出力 |
+| `--quiet`, `-q` | 成功時の出力を省く（エラー・警告は stderr に出る） |
+
+**実行内容（この順）:**
+
+1. 事前確認（**1 つでも当てはまれば何も変えずに終了コード 1 で止まる**）
+   - 旧名の装置が無い（DB にも asset.json にも）／旧名の asset.json が読めない
+   - 新名が名前の検査に通らない（空・パス区切り・`..`・Windows の禁止文字や予約名など）
+   - 旧名と新名が同じ（大文字小文字だけの違いも同じ扱い）
+   - 新名の装置が DB か asset.json に既にある
+   - `assets/<new-name>` が既にある（ファイルでも）
+2. `assets/<old-name>/` を `assets/<new-name>/` へ丸ごと移す（git の作業ツリーと `.git` ごと）
+3. asset.json を書き換える: `name` を新名に、`previous_names` へ旧名を追記（古い順・重複なし）。
+   `display_name` が旧名と同じなら新名に変え、違えば変えない
+4. **他の装置の `asset_links.json` にある子装置の参照**（`child_assets[].child_asset_name`）を新名へ書き換える
+   （子装置は名前で参照されるため、書き換えないと `asset bom` / `asset list` から切れる）
+5. DB を 1 つのトランザクションで更新: `Assets` の `Name`・`DirectoryPath`・`DisplayName`・`PreviousNames`、
+   ベクトル索引（`VectorIndex`）のこの装置の行の装置名と文書のパス
+
+途中で失敗したら、それまでの変更を**逆順に戻して**から失敗を報告する。
+Windows でフォルダが別のプロセスに開かれていて移動できないときは、何も変わっていない状態で止まり、原因を stderr に出す。
+
+**引き継がれるもの:** 装置の ID、部品のリンク（`AssetComponents`）、親子のリンク（`AssetSubAssets`）— これらは ID で結ばれている。
+
+**変えないもの:** git のリモート（名前・URL）。終わりに「リモートの名前・URL は変えていません」と表示する。
+必要なら `git remote` と GitHub 側で手動で変える。
+
+**改名後に再実行を勧めるもの:** ベクトル索引の行を更新した場合は `daid sync --include-vectors`
+（検索用の埋め込みのテキストに旧名が含まれているため。表示と絞り込みに使う装置名・パスは更新済み）。
+
+**DB だけ・asset.json だけの装置:** どちらか一方にしか無い装置も改名できる（無い側は触らず警告する）。
+DB にしか無い装置は asset.json を作らないので、`daid sync --restore-json` で復元する
+（このとき DB に保存した `previous_names` も書かれる）。
+
+**例:**
+
+```bash
+daid asset rename threat-intel-scanner immune-guard
+daid asset rename old-name new-name --json
+```
+
 #### asset link
 
 子装置（SubAsset）を親装置に組み込む。
@@ -952,6 +1005,7 @@ data/
 | `name` | string | ○ | 装置名（英数字・ハイフン） |
 | `display_name` | string | — | 表示名（日本語可） |
 | `description` | string | — | 説明 |
+| `previous_names` | string[] | — | 変更前の名前（古い順）。`asset rename` が追記する。改名したことのない装置には無い |
 | `created_at` | DateTime | ○ | 作成日時（ISO 8601 UTC） |
 
 ---

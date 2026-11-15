@@ -32,6 +32,13 @@ public record AssetJson
     [JsonPropertyName("tags")]
     public List<string>? Tags { get; init; }
 
+    /// <summary>
+    /// 変更前の名前（古い順）。<c>asset rename</c> が追記する。
+    /// 改名したことのない装置では書かない（null）。
+    /// </summary>
+    [JsonPropertyName("previous_names")]
+    public List<string>? PreviousNames { get; init; }
+
     /// <summary>作成日時</summary>
     [JsonPropertyName("created_at")]
     public DateTime CreatedAt { get; init; }

@@ -57,6 +57,12 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
         // Tags はマッピングしない（TagsRaw を通じてアクセス）
         builder.Ignore(a => a.Tags);
 
+        // PreviousNamesRaw（変更前の名前の JSON 配列）
+        builder.Property(a => a.PreviousNamesRaw)
+            .HasColumnName("PreviousNames")
+            .HasMaxLength(4000);
+        builder.Ignore(a => a.PreviousNames);
+
         // 日時
         builder.Property(a => a.CreatedAt)
             .IsRequired()

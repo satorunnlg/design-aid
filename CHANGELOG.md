@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`daid asset rename <old-name> <new-name>`**（#7）。ID を変えずに装置の名前とフォルダを変える
+  - asset.json と DB の両方で同じ ID のまま `name` だけを変え、`assets/<old>/` を `assets/<new>/` へ
+    git ごと移す。git のリモートは変えない（終わりに表示する）
+  - asset.json に `previous_names`（古い順・重複なし）を追加し、変更前の名前を残す。DB の `Assets` にも
+    `PreviousNames` 列を追加（マイグレーション `AddAssetPreviousNames`。次に daid を実行したとき自動で適用される）。
+    `asset update` / `sync` / `sync --restore-json` はこの欄を落とさずに往復させる
+  - 名前や ID で結ばれたものを同じ処理で揃える: 他の装置の `asset_links.json` の子装置の参照、
+    DB の `DirectoryPath`、ベクトル索引の装置名と文書のパス。部品・子装置のリンクは ID で結ばれているので引き継がれる
+  - 事前確認（旧名なし・新名が不正・新名が既にある・移動先が既にある・旧名と新名が同じ）に 1 つでも当てはまれば
+    何も変えずに終了コード 1 で止まる。途中で失敗したら逆順に戻す
+  - `--json` / `--quiet`
+- `asset add` が装置名を検査するようになった（`asset rename` と同じ検査。空・パス区切り・`..`・
+  Windows の禁止文字や予約名・末尾の `.` を終了コード 2 で拒否する）
+
 ## [0.6.1-alpha] - 2026-10-12
 
 ### Fixed

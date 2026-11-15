@@ -265,7 +265,8 @@ public class SyncService : ISyncService
                 asset.Description,
                 asset.Status,
                 asset.Tags,
-                asset.CreatedAt));
+                asset.CreatedAt,
+                asset.PreviousNames));
         }
 
         return gaps.OrderBy(g => g.Name, StringComparer.Ordinal).ToList();
@@ -303,6 +304,7 @@ public class SyncService : ISyncService
                     Description = gap.Description,
                     Status = ToJsonStatus(gap.Status),
                     Tags = gap.Tags.Count > 0 ? gap.Tags.ToList() : null,
+                    PreviousNames = gap.PreviousNames is { Count: > 0 } ? gap.PreviousNames.ToList() : null,
                     CreatedAt = ToUtc(gap.CreatedAt)
                 });
                 restored++;
@@ -358,7 +360,8 @@ public sealed record AssetJsonGap(
     string? Description,
     AssetStatus Status,
     IReadOnlyList<string> Tags,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    IReadOnlyList<string>? PreviousNames = null);
 
 /// <summary>
 /// 同期結果。
