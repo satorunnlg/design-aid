@@ -326,7 +326,7 @@ public class AssetRenamePlannerTests
         var msg = AssetRenamePlanner.FormatUnreadableArchivesError(new[] { zip });
         Assert.Contains(Path.GetFullPath(zip), msg);              // どの zip か（絶対パス）
         Assert.Contains("直し方", msg); Assert.Contains("退避", msg);                  // 直し方 1
-        Assert.Contains("daid archive restore asset broken", msg); // 直し方 2（zip のファイル名から装置名）
+        Assert.Contains("名前: broken", msg); // 直し方 2（zip のファイル名から装置名。名前は別の行）
         Assert.Contains("旧名を子装置として参照している", msg);      // 止める理由は残す
     }
 
@@ -533,4 +533,32 @@ public class AssetRenamePlannerTests
         Assert.Null(json);
         Assert.Equal(0, count);
     }
+
+    [Theory]
+    [InlineData("pump unit")]
+    [InlineData("-rf")]
+    [InlineData("a\"b")]
+    [InlineData("a'b $(x) `y` ;z")]
+    public void FormatUnreadableArchivesError_名前はコマンドに埋め込まず別の行で示す_空白_引用符_先頭のハイフンでも案内が誤らない(string name)
+    {
+        var zip = Path.Combine(Path.GetTempPath(), "arc", name + ".zip");
+        var msg = AssetRenamePlanner.FormatUnreadableArchivesError(new[] { zip });
+        Assert.Contains("\n  名前: " + name, msg);                       // 名前が 1 行にそのまま出る
+        Assert.Contains("`daid archive restore asset <名前>`", msg);       // コマンドは名前を含まない形で示す
+        foreach (var line in msg.Split('\n'))
+            if (line.Contains("daid archive restore")) Assert.DoesNotContain(name, line.Replace(Path.GetFullPath(zip), ""));
+    }
+
+    [Theory]
+    [InlineData("pump unit")]
+    [InlineData("-rf")]
+    public void CheckPreconditions_アーカイブ済みの案内も_名前をコマンドに埋め込まない(string name)
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldName = name, OldArchived = true });
+        var msg = Assert.Single(errors, e => e.Contains("アーカイブ済み"));
+        Assert.Contains("\n  名前: " + name, msg);
+        foreach (var line in msg.Split('\n'))
+            if (line.Contains("daid archive restore")) Assert.DoesNotContain(name, line);
+    }
+
 }

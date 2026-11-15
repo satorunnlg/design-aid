@@ -203,7 +203,7 @@ public static class AssetRenamePlanner
             errors.Add(FormatUnreadableArchivesError(f.UnreadableArchives));
 
         if (f.OldArchived)
-            errors.Add($"改名元の装置はアーカイブ済みです: {f.OldName}（先に daid archive restore asset {f.OldName} で復元してください）");
+            errors.Add($"改名元の装置はアーカイブ済みです（先に `daid archive restore asset <名前>` の <名前> を次の名前に置き換えて（空白や記号を含むときはシェルに合わせて引用符で囲んで）復元してください）。\n  名前: {f.OldName}");
 
         if (f.ArchivesReferencingOld is { Count: > 0 })
             errors.Add($"アーカイブ内の asset_links.json が旧名 '{f.OldName}' を子装置として参照しています: {string.Join(", ", f.ArchivesReferencingOld)}（その親装置を先に daid archive restore asset で復元してください）");
@@ -261,10 +261,11 @@ public static class AssetRenamePlanner
     public static string FormatUnreadableArchivesError(IReadOnlyList<string> zipPaths)
     {
         var paths = string.Join("、", zipPaths.Select(Path.GetFullPath));
-        var restores = string.Join("、", zipPaths.Select(z => $"daid archive restore asset {Path.GetFileNameWithoutExtension(z)}"));
+        // 名前はコマンドの文字列に埋め込まず、別の行で示す（空白・引用符・先頭の - を含む名前が、実行すると壊れる案内にならないように）
+        var names = string.Join("", zipPaths.Select(z => $"\n  名前: {Path.GetFileNameWithoutExtension(z)}"));
         return $"検査できないアーカイブがあります（その zip が旧名を子装置として参照しているかもしれず、確認できないまま改名はできません）: {paths}。" +
                $"直し方: その zip を archive/assets/ の外へ退避する（壊れていて不要ならそのまま退避してよい）か、" +
-               $"アーカイブした装置なら {restores} で戻してから、改名をやり直してください。";
+               $"アーカイブした装置なら `daid archive restore asset <名前>` の <名前> を、次の名前に置き換えて（空白や記号を含むときはシェルに合わせて引用符で囲んで）戻してから、改名をやり直してください。" + names;
     }
 
     /// <summary>

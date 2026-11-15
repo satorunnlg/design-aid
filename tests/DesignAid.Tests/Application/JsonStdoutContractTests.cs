@@ -233,6 +233,34 @@ public partial class JsonStdoutContractTests : IDisposable
     [InlineData(new[] { "asset", "list" }, false)]
     [InlineData(new[] { "search", "--", "--json" }, false)]
     [InlineData(new[] { "--jsonx" }, false)]
-    public void HasJsonFlag_オプション終端より前の_json_だけを見る(string[] args, bool expected)
+    [InlineData(new[] { "x", "--json", "true" }, true)]
+    [InlineData(new[] { "x", "--json", "false" }, false)]
+    [InlineData(new[] { "x", "--json=true" }, true)]
+    [InlineData(new[] { "x", "--json=false" }, false)]
+    [InlineData(new[] { "x", "--json:false" }, false)]
+    [InlineData(new[] { "x", "--json", "false", "--json" }, true)]   // 最後に現れたものが効く
+    [InlineData(new[] { "x", "--json", "--json=false" }, false)]
+    [InlineData(new[] { "x", "--json", "y" }, true)]                  // 次が真偽値でなければ裸の指定
+    [InlineData(new[] { "x", "--json", "false", "--", "--json" }, false)] // -- 以後は見ない
+    public void HasJsonFlag_オプション終端より前の_json_だけを見る_値を解釈する(string[] args, bool expected)
         => Assert.Equal(expected, Program.HasJsonFlag(args));
+
+    [Theory]
+    [InlineData(new[] { "asset", "list", "--json", "--bogus" }, true)]
+    [InlineData(new[] { "asset", "list", "--json", "true", "--bogus" }, true)]
+    [InlineData(new[] { "asset", "list", "--json", "false", "--bogus" }, false)]
+    [InlineData(new[] { "asset", "list", "--json=true", "--bogus" }, true)]
+    [InlineData(new[] { "asset", "list", "--json=false", "--bogus" }, false)]
+    [InlineData(new[] { "asset", "list", "--bogus" }, false)]
+    [InlineData(new[] { "asset", "list", "--bogus", "--", "--json" }, false)]
+    [InlineData(new[] { "bogus", "--json" }, true)]                  // 未知のコマンドは文字列の走査で補う
+    [InlineData(new[] { "bogus", "--json", "false" }, false)]
+    [InlineData(new[] { "bogus", "--json=false" }, false)]
+    public async Task 解析の失敗_jsonの判定は解析済みの値に従う_JSONを出すのは有効なときだけ(string[] args, bool expectJson)
+    {
+        var (code, so, se) = await RunAsync(args);
+        Assert.NotEqual(0, code);
+        Assert.Equal(expectJson, JsonGuard.IsSingleJson(so));
+        Assert.False(string.IsNullOrWhiteSpace(se) && !expectJson, "診断が出ていない");
+    }
 }

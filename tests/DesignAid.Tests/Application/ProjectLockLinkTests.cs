@@ -154,4 +154,76 @@ public class ProjectLockLinkTests : IDisposable
         var key = ProjectLock.ResolveKey(a);
         Assert.False(string.IsNullOrEmpty(key));
     }
+
+    [Fact]
+    public void TrimTrailingSeparators_ルートは保ち_通常の末尾の区切りは除く()
+    {
+        var sep = Path.DirectorySeparatorChar;
+        var root = Path.GetPathRoot(_base)!;
+        Assert.Equal(root, ProjectLock.TrimTrailingSeparators(root));
+        Assert.Equal(_base, ProjectLock.TrimTrailingSeparators(_base + sep));
+        Assert.Equal(_base, ProjectLock.TrimTrailingSeparators(_base + sep + sep));
+    }
+
+    [Fact]
+    public void ResolveKey_ルートを指すリンクの先の階層も_絶対パスのまま実体と同じキーになる()
+    {
+        if (OperatingSystem.IsWindows()) return; // ルートへの symlink は Unix だけ
+        var rootLink = Path.Combine(_base, "rootlink");
+        Directory.CreateSymbolicLink(rootLink, "/");
+        var viaLink = rootLink + _base; // 例: /tmp/x/rootlink/tmp/x
+        var key = ProjectLock.ResolveKey(viaLink);
+        Assert.True(Path.IsPathRooted(key), key);
+        Assert.Equal(ProjectLock.ResolveKey(_base), key);
+        Assert.Equal("/", ProjectLock.ResolveKey(rootLink));
+    }
+
+    [Theory]
+    [InlineData("Proj", new[] { "proj", "other" }, "proj")]          // 大文字小文字だけ違う 1 つ → 実際の綴り
+    [InlineData("Proj", new[] { "Proj", "proj" }, "Proj")]           // 完全一致を優先
+    [InlineData("proj", new[] { "Proj", "PROJ" }, "proj")]           // 2 つ以上あって完全一致が無い → そのまま
+    [InlineData("proj", new[] { "other" }, "proj")]                  // 無い → そのまま
+    [InlineData("proj", new string[0], "proj")]
+    public void PickActualName_完全一致を優先_大小文字違いは一意のときだけ採る(string name, string[] siblings, string expected)
+        => Assert.Equal(expected, ProjectLock.PickActualName(name, siblings));
+
+    /// <summary>この場所が大文字小文字を区別しないボリュームか（実際にファイルを作って確かめる）。</summary>
+    private bool IsCaseInsensitiveVolume()
+    {
+        var probe = Path.Combine(_base, "casepROBE");
+        File.WriteAllText(probe, "x");
+        try { return File.Exists(Path.Combine(_base, "CASEprobe")); }
+        finally { File.Delete(probe); }
+    }
+
+    [Fact]
+    public void 再入の判定_大文字小文字を区別しないボリュームでは_綴りを変えて同じ実体を指しても再入になる()
+    {
+        if (!IsCaseInsensitiveVolume()) return; // 区別するボリュームでは別の実体になる（下の検査）
+        var dir = MakeReal("CaseProj");
+        Assert.Equal(ProjectLock.ResolveKey(dir), ProjectLock.ResolveKey(Path.Combine(_base, "caseproj")));
+        Assert.Equal(ProjectLock.ResolveKey(dir), ProjectLock.ResolveKey(Path.Combine(_base, "CASEPROJ")));
+        using var outer = ProjectLock.TryAcquire(dir);
+        Assert.NotNull(outer);
+        foreach (var variant in new[] { Path.Combine(_base, "caseproj"), Path.Combine(_base, "CASEPROJ"), dir.ToUpperInvariant(), dir.ToLowerInvariant() })
+        {
+            using var inner = ProjectLock.TryAcquire(variant);
+            Assert.True(inner != null && inner.IsReentrant, variant);
+        }
+    }
+
+    [Fact]
+    public void 再入の判定_大文字小文字を区別するボリュームでは_綴りだけ違う別の実体は再入にならない()
+    {
+        if (IsCaseInsensitiveVolume()) return; // 区別しないボリュームでは同じ実体（上の検査）
+        var upper = MakeReal("SepProj");
+        var lower = MakeReal("sepproj");
+        Assert.NotEqual(ProjectLock.ResolveKey(upper), ProjectLock.ResolveKey(lower));
+        using var outer = ProjectLock.TryAcquire(upper);
+        Assert.NotNull(outer);
+        using var inner = ProjectLock.TryAcquire(lower);
+        Assert.NotNull(inner);
+        Assert.False(inner!.IsReentrant); // 別の実体のロックを、自分のロックの再入として素通りしない
+    }
+
 }
