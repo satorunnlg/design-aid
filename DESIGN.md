@@ -1119,8 +1119,9 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
 
 **途中でプロセスが止まったとき（Ctrl+C・強制終了）:** 記録（ジャーナル）は持たない。フォルダの移動の後で止まると、
-フォルダだけ新名で、asset.json の `name` と DB は旧名のまま残りうる。復旧は、asset.json の `name` を新名に直し
-（`previous_names` に旧名を足す）、`daid sync` で DB のパスを揃える。
+フォルダだけ新名で、asset.json の `name` と DB は旧名のまま残りうる。復旧は、**フォルダを旧名に戻してから
+`asset rename` をやり直す**（asset.json と DB は旧名のままなので、そろった状態に戻る）。asset.json の `name` だけを
+新名に直して `daid sync` してはいけない。sync は DB の行を name で引くので、新名の行を**新しい ID で**作ってしまう。
 
 **古い daid（0.6.1-alpha 以前）との混在:** DB の列は NULL を許す追加だけなので、古い daid が新しい DB を読んでも壊れない。
 ただし古い daid の `asset update` は `previous_names` を知らないため、asset.json からこの欄を消す。
