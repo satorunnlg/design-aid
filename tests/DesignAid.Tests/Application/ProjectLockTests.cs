@@ -279,7 +279,8 @@ public class ProjectLockTests : IDisposable
             Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
             Assert.False(File.Exists(cache)); // ディスクのキャッシュも消える
 
-            var after = await vs.SearchAsync("旧装置の文書", threshold: -1, limit: 10);
+            // limit 1: 古いグラフのままだと、消えた文書が上位 1 件を占めて除外され、残っている別の装置の結果まで欠ける
+            var after = await vs.SearchAsync("旧装置の文書", threshold: -1, limit: 1);
 
             var only = Assert.Single(after); // 消えた文書は出ず、残っている別の装置の文書は欠けない
             Assert.Equal("other", only.AssetName);
