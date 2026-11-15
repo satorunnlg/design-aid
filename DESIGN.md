@@ -1121,10 +1121,14 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 **途中でプロセスが止まったとき（Ctrl+C・強制終了）:** 記録（ジャーナル）は持たない。変更は
 フォルダの移動 → asset.json → 他の装置の `asset_links.json` → DB のコミット の順なので、どこで止まったかを次の順に調べて戻す。
 
-1. **DB を見る**（`daid asset list`）。DB の名前が新名なら、コミットまで済んでいる。改名は完了しているので何も戻さない
-   （ベクトルの再計算だけ `daid sync --include-vectors`）
-2. DB が旧名（または DB に行が無い装置）なら、コミット前に止まっている。次の 3 つを**すべて旧名の状態に戻してから**
-   `asset rename` をやり直す
+1. **DB を直接見る**。`daid asset list` は asset.json から一覧を作るので、この判定には使えない（asset.json は DB より先に
+   書き換わるため、コミット前でも新名が出る）。装置の ID（asset.json の `id`）で DB を引く:
+   `sqlite3 design_aid.db "SELECT Name, PreviousNames FROM Assets WHERE Id = '<ID>' COLLATE NOCASE;"`
+   - 名前が新名なら、コミットまで済んでいる。改名は完了しているので何も戻さない（ベクトルの再計算だけ `daid sync --include-vectors`）
+   - 名前が旧名なら、コミット前に止まっている（2 へ）
+   - **行が無い装置**（asset.json だけの装置）は、この方法で判定できない。文書の索引の削除は行が無くてもコミットされるので、
+     索引の有無も証拠にならない。この場合は 3 に従って止める
+2. コミット前に止まっているときは、次の 3 つを**すべて旧名の状態に戻してから** `asset rename` をやり直す
    - フォルダ: `assets/<新名>` があれば `assets/<旧名>` へ戻す
    - asset.json: `name` が新名になっていれば旧名に戻し、`previous_names` の末尾に足された旧名を消す
      （装置のリポジトリで `git diff asset.json` を見て、改名による差分だけを戻す）
