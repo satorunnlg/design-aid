@@ -443,12 +443,15 @@ public class ProjectLockTests : IDisposable
             await other.SaveChangesAsync();
         }
         Assert.True(File.Exists(cache));
+        var stampBefore = await File.ReadAllTextAsync(cache + ".stamp");
 
         using var db2 = NewDb();
         using var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache); // 新しいインスタンス
         var hits = await vs2.SearchAsync("新しい文書", threshold: -1, limit: 1);
 
         Assert.Equal("fresh", Assert.Single(hits).AssetName);
+        // 古いディスクのキャッシュは使われず、作り直されて判定値が更新された
+        Assert.NotEqual(stampBefore, await File.ReadAllTextAsync(cache + ".stamp"));
     }
 
     [Fact]
