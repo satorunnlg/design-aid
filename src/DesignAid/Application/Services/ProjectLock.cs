@@ -65,8 +65,16 @@ public static class ProjectLock
         return string.Equals(name, FileName, cmp) || string.Equals(name.TrimEnd(' ', '.'), FileName, cmp);
     }
 
-    private static StringComparison KeyComparison
-        => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+    /// <summary>
+    /// 再入の判定のキーの比べ方。<see cref="IsLockFileName"/> と同じく、Windows と macOS は大文字小文字を区別しない
+    /// ボリュームが既定なので区別せずに比べる（macOS で大小文字だけ違うパスを再入と見なさず、自分のロックで止まるのを防ぐ）。
+    /// </summary>
+    public static StringComparison KeyComparison
+        => ResolveKeyComparison(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS());
+
+    /// <summary>OS ごとのキーの比べ方を決める（純関数。他の OS の分岐も検査から確かめられるよう切り出してある）。</summary>
+    public static StringComparison ResolveKeyComparison(bool isWindows, bool isMacOS)
+        => isWindows || isMacOS ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     /// <summary>
     /// 再入の判定に使うキー（<b>ロックファイルを置く場所</b>でもある）: フルパスにし、区切り文字をそろえ、末尾の区切りを除き、

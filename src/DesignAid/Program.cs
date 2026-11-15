@@ -27,7 +27,34 @@ public class Program
     public static async Task<int> RunAsync(string[] args)
     {
         var rootCommand = BuildRootCommand();
+
+        // 引数の解析に失敗したときは、ハンドラに届かない（JsonGuard が働かない）ので、ここで契約を守る（#10）:
+        // --json があるなら、標準出力は失敗の JSON 1 つだけにし、診断は標準エラーへ
+        var parseErrors = rootCommand.Parse(args).Errors.Select(e => e.Message).ToList();
+        if (parseErrors.Count > 0 && HasJsonFlag(args))
+        {
+            foreach (var message in parseErrors) Console.Error.WriteLine($"[ERROR] {message}");
+            Console.Out.Write(JsonGuard.BuildFailureJson(parseErrors, ParseFailureExitCode) + Environment.NewLine);
+            Console.Out.Flush();
+            Environment.ExitCode = ParseFailureExitCode;
+            return ParseFailureExitCode;
+        }
+
         return ResolveExitCode(await rootCommand.InvokeAsync(args), Environment.ExitCode);
+    }
+
+    /// <summary>引数の解析に失敗したときの終了コード（System.CommandLine の既定と同じ）。</summary>
+    public const int ParseFailureExitCode = 1;
+
+    /// <summary>引数に <c>--json</c> があるか（オプション終端の <c>--</c> より前だけを見る）。</summary>
+    public static bool HasJsonFlag(IEnumerable<string> args)
+    {
+        foreach (var a in args)
+        {
+            if (a == "--") return false;
+            if (a == "--json") return true;
+        }
+        return false;
     }
 
     /// <summary>

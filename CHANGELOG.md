@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `asset add` が装置名を検査するようになった（`asset rename` と同じ検査。空・パス区切り・`..`・
   Windows の禁止文字や予約名・末尾の `.` を終了コード 2 で拒否する）
 
+### Fixed
+
+- `--json` を付けて成功したときも、標準出力は JSON 1 つだけになる（#10）。`sync --json` で `components/` が無いとき、JSON のあとに
+  `Syncing to database...` と `[SUCCESS] ...` を標準出力へ出していた。`--json` のときの人向けの出力は標準エラーへ向ける
+  （`CommandHelper.HumanOutput`）。同じ種類として、`asset bom --json --export csv` が JSON でなく CSV を標準出力へ出していたのも直した
+  （`--json` を優先し、CSV は出さずに警告を標準エラーへ）。`--json` を持つ全コマンドを成功の経路で動かす検査
+  （`JsonStdoutContractTests`。コマンドは `BuildRootCommand()` から列挙する）を足した
+- `--json` を付けたまま引数の解析に失敗したとき（例: `asset list --json --bogus`）、ヘルプの文が標準出力に出ていた。
+  標準出力は失敗の JSON 1 つだけ、診断は標準エラー、終了コードは 1 になる（#10）
+- プロジェクトのロックの再入の判定が macOS でも大文字小文字を区別しており（`Ordinal`）、既定の大小文字を区別しないボリュームで、
+  大小文字だけ違うパスを再入と見なさず自分のロックで止まっていた。Windows と同じく macOS も区別しない比較にした（#10）
+
 ## [0.6.1-alpha] - 2026-10-12
 
 ### Fixed

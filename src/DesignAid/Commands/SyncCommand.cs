@@ -59,6 +59,8 @@ public class SyncCommand : Command
             // パーツがなくてもアセットの DB 同期は実行する
             if (!skipDb && !dryRun)
             {
+                // --json のときは、JSON を出したあとの人向けの出力（進捗・[SUCCESS]）を stderr へ（stdout は JSON 1 つ）
+                using var human = CommandHelper.HumanOutput(json);
                 SyncToDatabase(assetsDir, null, new PartJsonReader());
             }
             if (!skipDb && !json)

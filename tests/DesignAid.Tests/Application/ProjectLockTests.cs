@@ -336,6 +336,24 @@ public class ProjectLockTests : IDisposable
         await holder;
     }
 
+    [Theory]
+    [InlineData(true, false, StringComparison.OrdinalIgnoreCase)]
+    [InlineData(false, true, StringComparison.OrdinalIgnoreCase)]
+    [InlineData(false, false, StringComparison.Ordinal)]
+    public void ProjectLock_キーの比べ方は_WindowsとmacOSで大文字小文字を区別しない(bool isWindows, bool isMacOS, StringComparison expected)
+    {
+        Assert.Equal(expected, ProjectLock.ResolveKeyComparison(isWindows, isMacOS));
+    }
+
+    [Fact]
+    public void ProjectLock_実際のキーの比べ方は_この環境のOSの判定を使っている_呼び出し側の固定()
+    {
+        Assert.Equal(ProjectLock.ResolveKeyComparison(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS()), ProjectLock.KeyComparison);
+        // macOS でだけ走る分岐: 既定の大小文字を区別しないボリュームで、大小文字だけ違うキーを同じと見なす
+        if (OperatingSystem.IsMacOS())
+            Assert.True(string.Equals("/Users/A/Proj", "/users/a/proj", ProjectLock.KeyComparison));
+    }
+
     [Fact]
     public async Task 改名の途中では_part_archive_part_deploy_backup_syncのjsonも待たずに止まる()
     {

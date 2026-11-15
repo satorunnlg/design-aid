@@ -53,13 +53,16 @@ public class AssetBomCommand : Command
         // BOM エントリを収集
         var bomEntries = await CollectBomEntries(assetsDir, componentsDir, name, includeSubassets);
 
-        if (export?.Equals("csv", StringComparison.OrdinalIgnoreCase) == true)
+        var wantsCsv = export?.Equals("csv", StringComparison.OrdinalIgnoreCase) == true;
+        if (json)
+        {
+            // --json の標準出力は JSON 1 つだけ（#10）。--export csv と同時に指定されたら JSON を優先し、CSV は出さない
+            if (wantsCsv) Console.Error.WriteLine("[WARN] --json と --export csv は同時に使えません。--json を優先し、CSV は出力しません。");
+            OutputJson(bomEntries, name, assetJson.DisplayName);
+        }
+        else if (wantsCsv)
         {
             OutputCsv(bomEntries, name);
-        }
-        else if (json)
-        {
-            OutputJson(bomEntries, name, assetJson.DisplayName);
         }
         else
         {

@@ -104,6 +104,30 @@ public static class CommandHelper
     }
 
     /// <summary>
+    /// <c>--json</c> のとき、人向けの出力（進捗・[SUCCESS] など）を標準エラーへ向ける範囲を作る。
+    /// 契約: <c>--json</c> の標準出力は JSON 1 つだけ（#10）。JSON を出す経路で、JSON を出したあとにも人向けの出力が
+    /// 続く処理（DB 同期など）を呼ぶときに <c>using</c> で包む。<paramref name="json"/> が偽なら何もしない。
+    /// </summary>
+    public static IDisposable HumanOutput(bool json)
+    {
+        if (!json) return NoopScope.Instance;
+        var previous = Console.Out;
+        Console.SetOut(Console.Error);
+        return new RestoreOutScope(previous);
+    }
+
+    private sealed class NoopScope : IDisposable
+    {
+        public static readonly NoopScope Instance = new();
+        public void Dispose() { }
+    }
+
+    private sealed class RestoreOutScope(TextWriter previous) : IDisposable
+    {
+        public void Dispose() => Console.SetOut(previous);
+    }
+
+    /// <summary>
     /// 読み取り中心の入口（backup）用のロック取得。書き込み権限が無くてロックファイルを作れないとき
     /// （読み取り専用の場所）は、警告を出して null を返す（ロックなしで続けてよい）。
     /// 別の処理が持っているとき（busy）は <paramref name="busy"/> を true にして null を返す（止めること）。
