@@ -272,6 +272,8 @@ public class BackupCommand : Command
 
             // SQLite 関連ファイルはスキップ（既にバックアップ済み or スキップ指定）
             var fileName = Path.GetFileName(file);
+            if (fileName == DesignAid.Application.Services.ProjectLock.FileName)
+                continue; // ロックファイルは他のプロセスが開いていて読めない。復元にも要らない
             if (fileName.StartsWith("design_aid.db"))
             {
                 if (!skipDb)

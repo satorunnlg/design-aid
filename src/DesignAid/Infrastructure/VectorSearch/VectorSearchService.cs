@@ -16,6 +16,13 @@ public class VectorSearchService : IDisposable
     private readonly string _hnswIndexPath;
     private SmallWorld<float[], float>? _hnswIndex;
     private List<(int HnswId, int VectorIndexId)>? _idMapping;
+
+    /// <summary>
+    /// メモリ上のグラフを作ったときの VectorIndex の状態（件数・最大 Id・Id の合計）。
+    /// 別のインスタンス・別のプロセス（asset rename など）が行を消したり足したりすると変わる。
+    /// 検索のたびに現在の状態と比べ、違えばメモリ上とディスク上のキャッシュを捨てて作り直す。
+    /// </summary>
+    private (int Count, int MaxId, long SumId)? _loadedStamp;
     private bool _disposed;
 
     /// <summary>
@@ -172,6 +179,12 @@ public class VectorSearchService : IDisposable
             return new List<SearchResult>();
         }
 
+        // 他の処理が行を消したり足したりしていたら、古いグラフを使い続けない
+        if (_hnswIndex != null && _loadedStamp != await ComputeStampAsync(ct))
+        {
+            InvalidateIndex();
+        }
+
         // HNSW インデックスを構築（未構築の場合）
         await EnsureIndexLoadedAsync(ct);
 
@@ -250,6 +263,7 @@ public class VectorSearchService : IDisposable
         {
             _hnswIndex = null;
             _idMapping = null;
+            _loadedStamp = null;
             DeleteIndexFile();
             return;
         }
@@ -279,8 +293,36 @@ public class VectorSearchService : IDisposable
             _idMapping.Add((hnswIds[i], entries[i].Id));
         }
 
+        _loadedStamp = await ComputeStampAsync(ct);
+
         // グラフをファイルに保存
         await SerializeIndexAsync(vectors);
+    }
+
+    /// <summary>VectorIndex の現在の状態（件数・最大 Id・Id の合計）。</summary>
+    private async Task<(int Count, int MaxId, long SumId)> ComputeStampAsync(CancellationToken ct)
+    {
+        var count = await _context.VectorIndex.CountAsync(ct);
+        if (count == 0) return (0, 0, 0);
+        var max = await _context.VectorIndex.MaxAsync(v => v.Id, ct);
+        var sum = await _context.VectorIndex.SumAsync(v => (long)v.Id, ct);
+        return (count, max, sum);
+    }
+
+    /// <summary>
+    /// ディスク上の HNSW キャッシュを消す。行を消した別の処理（asset rename など）が、
+    /// 古いグラフを次の検索で読み込ませないために呼ぶ。消せなくても例外にしない。
+    /// </summary>
+    public static void DeleteCacheFile(string hnswIndexPath)
+    {
+        try
+        {
+            if (File.Exists(hnswIndexPath)) File.Delete(hnswIndexPath);
+        }
+        catch
+        {
+            // 削除失敗は無視
+        }
     }
 
     /// <summary>
@@ -314,6 +356,7 @@ public class VectorSearchService : IDisposable
 
         _hnswIndex = null;
         _idMapping = null;
+        _loadedStamp = null;
         DeleteIndexFile();
     }
 
@@ -355,6 +398,7 @@ public class VectorSearchService : IDisposable
                 {
                     _idMapping.Add((i, entries[i].Id));
                 }
+                _loadedStamp = await ComputeStampAsync(ct);
                 return;
             }
             catch
@@ -399,6 +443,7 @@ public class VectorSearchService : IDisposable
     {
         _hnswIndex = null;
         _idMapping = null;
+        _loadedStamp = null;
         DeleteIndexFile();
     }
 

@@ -25,6 +25,8 @@ public class AssetLinkCommand : Command
     private static void Execute(string parentAsset, string child, int quantity, string? notes)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetJsonReader = new AssetJsonReader();
 

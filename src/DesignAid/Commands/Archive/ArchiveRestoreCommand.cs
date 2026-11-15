@@ -30,6 +30,8 @@ public class ArchiveRestoreCommand : Command
         }
 
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
 
         // アーカイブインデックスから検索
         var indexPath = CommandHelper.GetArchiveIndexPath();

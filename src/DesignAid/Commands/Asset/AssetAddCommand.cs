@@ -32,13 +32,18 @@ public class AssetAddCommand : Command
     private static async Task<int> ExecuteWithNameCheckAsync(
         string name, string? displayName, string? description, bool noGit)
     {
-        var nameError = DesignAid.Application.Services.AssetRenamePlanner.ValidateName(name);
+        var nameError = DesignAid.Application.Services.AssetRenamePlanner.ValidateNewName(name);
         if (nameError != null)
         {
             Console.Error.WriteLine($"[ERROR] 装置名が使えません: {nameError}");
             Environment.ExitCode = 2;
             return 2;
         }
+
+        // 装置の状態を変える入口なので、プロジェクト共通のロックを取ってから従来の処理へ
+        if (CommandHelper.EnsureDataDirectory() == null) return Environment.ExitCode;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return 1;
 
         await ExecuteAsync(name, displayName, description, noGit);
         return 0;

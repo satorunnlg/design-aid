@@ -52,6 +52,53 @@ public class AssetRenamePlannerTests
         Assert.NotNull(AssetRenamePlanner.ValidateName(name));
     }
 
+    [Theory]
+    [InlineData("COM\u00B9")]
+    [InlineData("COM\u00B2")]
+    [InlineData("COM\u00B3")]
+    [InlineData("LPT\u00B9")]
+    [InlineData("LPT\u00B2")]
+    [InlineData("LPT\u00B3")]
+    [InlineData("com\u00B9.txt")]
+    [InlineData("LPT\u00B3.log")]
+    public void ValidateName_上付き数字の予約名_拒否する(string name)
+    {
+        Assert.NotNull(AssetRenamePlanner.ValidateName(name));
+    }
+
+    [Theory]
+    [InlineData("COM10")]
+    [InlineData("LPT10")]
+    [InlineData("COM0")]
+    [InlineData("COMX")]
+    [InlineData("xCOM1")]
+    public void ValidateName_予約名に似た通常の名前_通す(string name)
+    {
+        Assert.Null(AssetRenamePlanner.ValidateName(name));
+    }
+
+    [Fact]
+    public void ValidateNewName_UTF8で255バイトまで_境界()
+    {
+        Assert.Null(AssetRenamePlanner.ValidateNewName(new string('a', 255)));
+        Assert.NotNull(AssetRenamePlanner.ValidateNewName(new string('a', 256)));
+        Assert.Null(AssetRenamePlanner.ValidateNewName(new string('漢', 85)));       // 255 バイト
+        Assert.NotNull(AssetRenamePlanner.ValidateNewName(new string('漢', 86)));    // 258 バイト
+        var emoji = char.ConvertFromUtf32(0x1F600);                                   // 4 バイト
+        Assert.Null(AssetRenamePlanner.ValidateNewName(string.Concat(Enumerable.Repeat(emoji, 63)) + "abc"));   // 255
+        Assert.NotNull(AssetRenamePlanner.ValidateNewName(string.Concat(Enumerable.Repeat(emoji, 63)) + "abcd")); // 256
+    }
+
+    [Fact]
+    public void CheckPreconditions_新名はバイト上限を課し_旧名には課さない()
+    {
+        var longOld = new string('漢', 86); // 258 バイトだが 255 文字以内
+        Assert.Empty(AssetRenamePlanner.CheckPreconditions(Ok() with { OldName = longOld }));
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { NewName = new string('漢', 86) });
+        Assert.Single(errors);
+        Assert.Contains("バイト", errors[0]);
+    }
+
     [Fact]
     public void ValidateName_長すぎる名前_理由を返す()
     {
@@ -268,11 +315,11 @@ public class AssetRenamePlannerTests
     }
 
     [Fact]
-    public void CheckPreconditions_別の改名が実行中_止める()
+    public void CheckPreconditions_別の変更が実行中_止める()
     {
         var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { RenameInProgress = true });
         Assert.Single(errors);
-        Assert.Contains("別の改名が実行中", errors[0]);
+        Assert.Contains("別の変更が実行中", errors[0]);
     }
 
     // ---- UpdatePreviousNames ----

@@ -22,6 +22,8 @@ public class AssetUnlinkCommand : Command
     private static void Execute(string parentAsset, string child)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetJsonReader = new AssetJsonReader();
 

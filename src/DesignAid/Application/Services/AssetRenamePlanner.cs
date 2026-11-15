@@ -15,7 +15,9 @@ public static class AssetRenamePlanner
     {
         "CON", "PRN", "AUX", "NUL",
         "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        // 上付き数字（U+00B9 U+00B2 U+00B3）も Windows では予約デバイス名として扱われる
+        "COM\u00B9", "COM\u00B2", "COM\u00B3", "LPT\u00B9", "LPT\u00B2", "LPT\u00B3"
     };
 
     /// <summary>
@@ -49,6 +51,22 @@ public static class AssetRenamePlanner
         if (ReservedNames.Contains(stem))
             return $"'{name}' は OS の予約名のため使えません";
 
+        return null;
+    }
+
+    /// <summary>ファイル名の上限（UTF-8 のバイト数）。Linux の一般的なファイルシステムは 255 文字ではなく 255 バイト。</summary>
+    public const int MaxNameBytes = 255;
+
+    /// <summary>
+    /// <b>新しく付ける名前</b>の検査。<see cref="ValidateName"/> に加えて UTF-8 で 255 バイトの上限を課す。
+    /// 旧名にはこの上限を課さない（既存の長い名前を改名できなくならないように）。
+    /// </summary>
+    public static string? ValidateNewName(string? name)
+    {
+        var error = ValidateName(name);
+        if (error != null) return error;
+        if (System.Text.Encoding.UTF8.GetByteCount(name!) > MaxNameBytes)
+            return $"装置名が長すぎます（UTF-8 で {MaxNameBytes} バイトまで。日本語は 1 文字 3 バイトです）";
         return null;
     }
 
@@ -106,7 +124,7 @@ public static class AssetRenamePlanner
 
         if (f.RenameInProgress)
         {
-            errors.Add("別の改名が実行中です（同じプロジェクトでは同時に 1 つしか改名できません）。終わってからやり直してください");
+            errors.Add("別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。終わってからやり直してください");
             return errors;
         }
 
@@ -123,7 +141,7 @@ public static class AssetRenamePlanner
             return errors;
         }
 
-        var nameError = ValidateName(f.NewName);
+        var nameError = ValidateNewName(f.NewName);
         if (nameError != null)
         {
             errors.Add($"新しい名前が使えません: {nameError}");
@@ -166,7 +184,7 @@ public static class AssetRenamePlanner
             errors.Add($"同じ名前のアーカイブがあります: {f.NewName}（アーカイブ済みの装置と名前が衝突するため改名できません）");
 
         if (f.OldJsonIdOwner != null)
-            errors.Add($"asset.json の ID が別の装置のものです: {f.OldJsonIdOwner}（asset.json をコピーした可能性があります。確認してください）");
+            errors.Add($"更新対象の装置 ID が別の装置のものです: {f.OldJsonIdOwner}（asset.json をコピーした可能性があります。確認してください）");
 
         if (f.UnreadableArchives is { Count: > 0 })
             errors.Add($"検査できないアーカイブがあります（子装置の参照を確認できないため改名できません）: {string.Join(", ", f.UnreadableArchives)}");

@@ -1,5 +1,6 @@
 using DesignAid.Infrastructure.FileSystem;
 using DesignAid.Infrastructure.Persistence;
+using DesignAid.Infrastructure.VectorSearch;
 using Microsoft.EntityFrameworkCore;
 
 namespace DesignAid.Application.Services;
@@ -30,6 +31,12 @@ public class AssetRenameService
     public Func<string, Task>? StepHook { get; set; }
 
     /// <summary>
+    /// HNSW キャッシュファイルのパス。省略時は <c>&lt;プロジェクト&gt;/hnsw_index.bin</c>。
+    /// 文書の索引の行を消したら、コミット後にこのファイルを消す（ロールバック時は消さない）。
+    /// </summary>
+    public string? HnswIndexPath { get; set; }
+
+    /// <summary>
     /// AssetRenameService を初期化する。
     /// </summary>
     /// <param name="db">DB コンテキスト（呼び出し側が Dispose する）</param>
@@ -47,33 +54,19 @@ public class AssetRenameService
     public async Task<AssetRenameResult> RenameAsync(
         string assetsDir, string oldName, string newName, CancellationToken ct = default)
     {
-        // プロジェクト単位のロック（design_aid.db と同じディレクトリのロックファイル）。
-        // 事前確認から戻しの完了までを排他する。取れなければ待たずに止める。
-        // 開いているハンドルで持つので、プロセスが落ちても残らない（OS が解放し、DeleteOnClose でファイルも消える）
+        // プロジェクト単位の共通ロック（ProjectLock）。事前確認から戻しの完了までを排他する。取れなければ待たずに止める。
+        // 共有・ロック違反以外の IO エラー（場所が無い、容量不足など）は、元の例外のまま上へ出す
         var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
-        FileStream? lockStream;
-        try
-        {
-            lockStream = new FileStream(Path.Combine(dataDir, LockFileName), FileMode.OpenOrCreate,
-                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
-        }
-        // 場所が無い等の IOException の派生は「実行中」ではないので、そのまま上へ出す（原因を取り違えて案内しない）
-        catch (IOException ex) when (ex is not (DirectoryNotFoundException or FileNotFoundException
-                                                 or PathTooLongException or DriveNotFoundException))
+        using var projectLock = ProjectLock.TryAcquire(dataDir);
+        if (projectLock == null)
         {
             var busy = new AssetRenameResult { OldName = oldName, NewName = newName };
             busy.Errors.AddRange(AssetRenamePlanner.CheckPreconditions(BusyFacts(oldName, newName)));
             return busy;
         }
 
-        using (lockStream)
-        {
-            return await RenameLockedAsync(assetsDir, dataDir, oldName, newName, ct);
-        }
+        return await RenameLockedAsync(assetsDir, dataDir, oldName, newName, ct);
     }
-
-    /// <summary>ロックファイル名（design_aid.db と同じディレクトリに置く）。</summary>
-    public const string LockFileName = ".daid-rename.lock";
 
     private static AssetRenamePlanner.Facts BusyFacts(string oldName, string newName) => new(
         oldName, newName, true, true, false, false, false, false, RenameInProgress: true);
@@ -86,7 +79,7 @@ public class AssetRenameService
         var newDir = Path.Combine(assetsDir, newName);
 
         // ---- 1. 事前確認（何も変えない）----
-        var nameError = AssetRenamePlanner.ValidateName(newName);
+        var nameError = AssetRenamePlanner.ValidateNewName(newName);
         if (nameError != null)
         {
             result.Errors.Add($"新しい名前が使えません: {nameError}");
@@ -137,22 +130,30 @@ public class AssetRenameService
 
         var newArchived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), newName);
 
-        // asset.json の ID が DB の ID と食い違うとき、その ID が別の装置のもの（DB の別の行・assets/ の別の asset.json）なら止める。
-        // どの装置にも属さない食い違い（旧版の登録）は通す
+        // 更新対象になる ID（DB の ID と asset.json の ID）は、一致しているかどうかに関係なく、両方とも所有者を照合する。
+        // DB の別の行、または assets/ 直下の別の asset.json が同じ ID を持っていれば、変更前に止める
+        // （コピーされた asset.json を巻き込んで、別の装置の索引行まで消さないため）。
+        // どの装置にも属さない食い違い（旧版の登録）は、所有者がいないので通す
         string? jsonIdOwner = null;
-        if (json != null && json.Id != dbAsset?.Id)
+        var targetIdList = new List<Guid>();
+        if (dbAsset != null) targetIdList.Add(dbAsset.Id);
+        if (json != null && !targetIdList.Contains(json.Id)) targetIdList.Add(json.Id);
+        var otherJsons = new List<(string Dir, Guid Id)>();
+        if (Directory.Exists(assetsDir))
         {
-            var ownerRow = await _db.Assets.AsNoTracking().FirstOrDefaultAsync(a => a.Id == json.Id && a.Name != oldName, ct);
-            if (ownerRow != null) jsonIdOwner = $"DB の装置 '{ownerRow.Name}'";
-            else if (Directory.Exists(assetsDir))
+            foreach (var d in Directory.GetDirectories(assetsDir))
             {
-                foreach (var d in Directory.GetDirectories(assetsDir))
-                {
-                    if (string.Equals(Path.GetFullPath(d), Path.GetFullPath(oldDir), StringComparison.OrdinalIgnoreCase)) continue;
-                    var other = _jsonReader.Exists(d) ? _jsonReader.Read(d) : null;
-                    if (other != null && other.Id == json.Id) { jsonIdOwner = $"assets/{Path.GetFileName(d)}"; break; }
-                }
+                if (string.Equals(Path.GetFullPath(d), Path.GetFullPath(oldDir), StringComparison.OrdinalIgnoreCase)) continue;
+                var other = _jsonReader.Exists(d) ? _jsonReader.Read(d) : null;
+                if (other != null) otherJsons.Add((Path.GetFileName(d), other.Id));
             }
+        }
+        foreach (var id in targetIdList)
+        {
+            var ownerRow = await _db.Assets.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id && a.Name != oldName, ct);
+            if (ownerRow != null) { jsonIdOwner = $"DB の装置 '{ownerRow.Name}'（ID {id}）"; break; }
+            var ownerDir = otherJsons.FirstOrDefault(o => o.Id == id);
+            if (ownerDir != default) { jsonIdOwner = $"assets/{ownerDir.Dir}（ID {id}）"; break; }
         }
 
         var (referencing, unreadableArchives) = FindArchivesReferencing(Path.Combine(dataDir, "archive", "assets"), oldName);
@@ -346,6 +347,16 @@ public class AssetRenameService
                     await RunHookAsync("after-db-save");
                     await tx.CommitAsync(ct);
                     result.DbUpdated = dbAsset != null;
+
+                    // コミットの後で、検索のキャッシュを無効にする（行を消したので、古いグラフが残ると
+                    // 消えた文書が検索の上位を占めて、残っている別の装置の結果まで欠ける）。
+                    // 起動中のインスタンスは、次の検索で VectorIndex の状態の変化に気づいて作り直す。
+                    // ロールバックしたときは行が変わっていないので、ここへは来ない
+                    if (docRows.Count > 0)
+                    {
+                        VectorSearchService.DeleteCacheFile(
+                            HnswIndexPath ?? Path.Combine(dataDir, "hnsw_index.bin"));
+                    }
                 }
                 catch
                 {

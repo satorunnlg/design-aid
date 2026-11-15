@@ -75,6 +75,32 @@ public static class CommandHelper
     }
 
     /// <summary>
+    /// プロジェクト単位の共通ロック（<see cref="ProjectLock"/>）を取る。装置の状態を変えるコマンドが、
+    /// <see cref="EnsureDataDirectory"/> の直後に呼ぶ。取れなければ待たずに stderr へ出し、null を返す
+    /// （呼び出し元は return すること）。EnsureDataDirectory で検証済みであること。
+    /// </summary>
+    public static ProjectLock.Handle? AcquireProjectLock()
+    {
+        try
+        {
+            var handle = ProjectLock.TryAcquire(GetDataDirectory()!);
+            if (handle == null)
+            {
+                Console.Error.WriteLine("[ERROR] 別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。");
+                Console.Error.WriteLine("  終わってからやり直してください。");
+                Environment.ExitCode = 1;
+            }
+            return handle;
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"[ERROR] ロックを取得できませんでした: {ex.Message}");
+            Environment.ExitCode = 1;
+            return null;
+        }
+    }
+
+    /// <summary>
     /// カレントディレクトリから上方向に最大2階層まで design_aid.db を探索し、
     /// プロジェクトルート（design_aid.db が存在するディレクトリ）を返す。
     /// 見つからない場合は null。

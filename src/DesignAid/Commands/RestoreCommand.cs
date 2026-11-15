@@ -136,6 +136,15 @@ public class RestoreCommand : Command
                 Console.WriteLine();
                 Console.WriteLine($"復元先: {dataDir}");
 
+                // 復元は装置・DB を丸ごと置き換える。復元先が既にプロジェクトなら、ほかの変更と同時に走らせない
+                using var restoreLock = !dryRun && Directory.Exists(dataDir)
+                    ? DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir) : null;
+                if (!dryRun && Directory.Exists(dataDir) && restoreLock == null)
+                {
+                    Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
+                    return 1;
+                }
+
                 if (dryRun)
                 {
                     Console.WriteLine();

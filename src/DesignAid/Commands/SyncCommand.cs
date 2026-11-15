@@ -34,6 +34,8 @@ public class SyncCommand : Command
     private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb, bool restoreJson)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var assetsDir = CommandHelper.GetAssetsDirectory();
 
@@ -645,6 +647,11 @@ public class SyncCommand : Command
             }
             else
             {
+                // 文書の行を消した後で作り直す点が無いとき、古いグラフが残らないよう再構築（空なら捨てる）する
+                if (existingDocs.Count > 0)
+                {
+                    vectorService.RebuildIndexAsync().GetAwaiter().GetResult();
+                }
                 Console.WriteLine("[INFO] 同期対象のデータがありません");
             }
         }

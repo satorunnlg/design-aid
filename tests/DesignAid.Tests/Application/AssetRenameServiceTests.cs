@@ -1167,7 +1167,7 @@ public class AssetRenameServiceTests : IDisposable
         await AddAssetAsync("old");
         var files = SnapshotRoot();
         var dbRows = await SnapshotDbAsync();
-        var lockPath = Path.Combine(_root, AssetRenameService.LockFileName);
+        var lockPath = Path.Combine(_root, DesignAid.Application.Services.ProjectLock.FileName);
 
         AssetRenameResult busy;
         using (new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
@@ -1176,11 +1176,11 @@ public class AssetRenameServiceTests : IDisposable
         }
 
         Assert.False(busy.Success);
-        Assert.Contains(busy.Errors, e => e.Contains("別の改名が実行中"));
+        Assert.Contains(busy.Errors, e => e.Contains("別の変更が実行中"));
 
         File.Delete(lockPath);
-        Assert.Equal(files.Where(k => !k.Key.Contains(AssetRenameService.LockFileName)).ToDictionary(k => k.Key, k => k.Value),
-            SnapshotRoot().Where(k => !k.Key.Contains(AssetRenameService.LockFileName)).ToDictionary(k => k.Key, k => k.Value));
+        Assert.Equal(files.Where(k => !k.Key.Contains(DesignAid.Application.Services.ProjectLock.FileName)).ToDictionary(k => k.Key, k => k.Value),
+            SnapshotRoot().Where(k => !k.Key.Contains(DesignAid.Application.Services.ProjectLock.FileName)).ToDictionary(k => k.Key, k => k.Value));
         Assert.Equal(dbRows, await SnapshotDbAsync());
 
         var r = await RenameAsync("old", "new");
@@ -1209,7 +1209,7 @@ public class AssetRenameServiceTests : IDisposable
 
         var second = await RenameAsync("b", "b2"); // 2 つ目: 待たずに止まる
         Assert.False(second.Success);
-        Assert.Contains(second.Errors, e => e.Contains("別の改名が実行中"));
+        Assert.Contains(second.Errors, e => e.Contains("別の変更が実行中"));
         Assert.True(Directory.Exists(Path.Combine(_assetsDir, "b"))); // 何も変わっていない
 
         release.SetResult();
@@ -1229,6 +1229,87 @@ public class AssetRenameServiceTests : IDisposable
 
         var r = await RenameAsync("old", "new");
 
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    // ---- Codex 5 周目の指摘への検査 ----
+
+    [Fact]
+    public async Task Rename_asset_jsonのIDがDBのIDと一致していて_別フォルダにもコピーされている_何も変えずに止める()
+    {
+        var id = await AddAssetAsync("old");
+        var otherDir = Path.Combine(_assetsDir, "copy");
+        Directory.CreateDirectory(otherDir);
+        await _json.CreateAsync(otherDir, id, "copy"); // old の ID をコピーした別フォルダ
+        using (var db = NewDb())
+        {
+            db.VectorIndex.Add(VecRow(id, "old"));
+            await db.SaveChangesAsync();
+        }
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("別の装置") && e.Contains("copy"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        using var check = NewDb();
+        Assert.Equal("old", (await check.VectorIndex.AsNoTracking().SingleAsync()).AssetName);
+    }
+
+    [Fact]
+    public async Task Rename_DB側のIDが別フォルダのasset_jsonにある_ID食い違いでも何も変えずに止める()
+    {
+        var jsonId = await AddAssetAsync("old", inDb: false);
+        var dbId = Guid.NewGuid();
+        using (var db = NewDb())
+        {
+            db.Assets.Add(Asset.Create("old", Path.Combine(_assetsDir, "old"), "old", "", dbId));
+            await db.SaveChangesAsync();
+        }
+        var otherDir = Path.Combine(_assetsDir, "copy");
+        Directory.CreateDirectory(otherDir);
+        await _json.CreateAsync(otherDir, dbId, "copy"); // DB 側の ID が別フォルダの asset.json に
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("別の装置"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        Assert.NotEqual(jsonId, dbId);
+    }
+
+    [Fact]
+    public async Task Rename_IDが一致していて所有者が自分だけなら_通る()
+    {
+        await AddAssetAsync("old");
+        await AddAssetAsync("unrelated"); // 別の ID の別の装置は妨げない
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    [Fact]
+    public async Task Rename_新名のUTF8が255バイトを超える_何も変えずに止め_旧名の長さは制限しない()
+    {
+        await AddAssetAsync("old");
+        var files = SnapshotFiles();
+
+        var tooLong = await RenameAsync("old", new string('漢', 86)); // 258 バイト
+
+        Assert.False(tooLong.Success);
+        Assert.Equal(files, SnapshotFiles());
+
+        // 旧名が 255 バイトを超えていても（既存の長い名前）、改名できる
+        var longOld = new string('漢', 86);
+        await AddAssetAsync(longOld);
+        var r = await RenameAsync(longOld, "short");
         Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
     }
 

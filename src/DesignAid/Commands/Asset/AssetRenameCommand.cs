@@ -30,19 +30,29 @@ public class AssetRenameCommand : Command
     /// </summary>
     private static async Task<int> ExecuteAsync(string oldName, string newName, bool json, bool quiet)
     {
-        if (CommandHelper.EnsureDataDirectory() == null) return Environment.ExitCode;
+        if (CommandHelper.EnsureDataDirectory() == null)
+        {
+            // プロジェクトが見つからない。--json のときも、標準出力に失敗の JSON を 1 つだけ出す（診断は stderr）
+            if (json) WriteFailureJson(oldName, newName, new[] { "プロジェクトが見つかりません（design_aid.db を探しましたが見つかりませんでした）" });
+            return Environment.ExitCode;
+        }
         var assetsDir = CommandHelper.GetAssetsDirectory();
 
         AssetRenameResult result;
         try
         {
             using var db = CommandHelper.CreateDbContext();
-            result = await new AssetRenameService(db).RenameAsync(assetsDir, oldName, newName);
+            var settings = CommandHelper.LoadSettings();
+            var hnswPath = Path.Combine(CommandHelper.GetDataDirectory()!,
+                settings.Get("vector_search.hnsw_index_path", "hnsw_index.bin")!);
+            result = await new AssetRenameService(db) { HnswIndexPath = hnswPath }.RenameAsync(assetsDir, oldName, newName);
         }
         catch (Exception ex)
         {
             // DB を開けないなど。変更は事前確認の後にしか始まらないので、何も変えていない
+            // DB を開けない・読み取り権限が無い・archive_index.json が壊れている・ロックを取れない など
             Console.Error.WriteLine($"[ERROR] 改名を始められませんでした（何も変更していません）: {ex.Message}");
+            if (json) WriteFailureJson(oldName, newName, new[] { $"改名を始められませんでした（何も変更していません）: {ex.Message}" });
             Environment.ExitCode = 1;
             return 1;
         }
@@ -163,5 +173,21 @@ public class AssetRenameCommand : Command
                 rollbackFailures = result.RollbackFailures
             }, JsonOut));
         }
+    }
+
+    /// <summary>
+    /// 改名の前の段階（プロジェクトが無い・初期化の失敗）の失敗を、--json の失敗応答と同じ形で標準出力へ出す。
+    /// </summary>
+    private static void WriteFailureJson(string oldName, string newName, IEnumerable<string> errors)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            success = false,
+            oldName,
+            newName,
+            errors = errors.ToList(),
+            rolledBack = new List<string>(),
+            rollbackFailures = new List<string>()
+        }, JsonOut));
     }
 }

@@ -59,6 +59,9 @@ public static class DesignAidMcpTools
         return JsonSerializer.Serialize(new { assets = result, total = assets.Count }, JsonOptions);
     }
 
+    /// <summary>別の変更が実行中のときの応答（待たずに返す）。</summary>
+    private const string BusyMessage = "別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。終わってからやり直してください";
+
     [McpServerTool, Description("新しい装置（アセット）を追加する。")]
     public static async Task<string> AddAsset(
         IAssetService assetService,
@@ -66,6 +69,14 @@ public static class DesignAidMcpTools
         [Description("表示名。省略時は name と同じ。")] string? displayName = null,
         [Description("装置の説明。")] string? description = null)
     {
+        var nameError = DesignAid.Application.Services.AssetRenamePlanner.ValidateNewName(name);
+        if (nameError != null)
+            return JsonSerializer.Serialize(new { error = $"装置名が使えません: {nameError}" }, JsonOptions);
+
+        using var projectLock = DesignAid.Application.Services.ProjectLock.TryAcquire(CommandHelper.GetDataDirectory()!);
+        if (projectLock == null)
+            return JsonSerializer.Serialize(new { error = BusyMessage }, JsonOptions);
+
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetPath = Path.Combine(assetsDir, name);
 
@@ -133,6 +144,10 @@ public static class DesignAidMcpTools
         [Description("装置名")] string assetName,
         [Description("数量")] int quantity = 1)
     {
+        using var projectLock = DesignAid.Application.Services.ProjectLock.TryAcquire(CommandHelper.GetDataDirectory()!);
+        if (projectLock == null)
+            return JsonSerializer.Serialize(new { error = BusyMessage }, JsonOptions);
+
         var part = await partService.GetByPartNumberAsync(partNumber);
         if (part == null)
             return JsonSerializer.Serialize(new { error = $"パーツ '{partNumber}' が見つかりません" }, JsonOptions);
@@ -295,6 +310,10 @@ public static class DesignAidMcpTools
         [Description("ベクトルインデックスも同期する場合 true")] bool includeVectors = false,
         [Description("強制同期（ハッシュ再計算）する場合 true")] bool force = false)
     {
+        using var projectLock = DesignAid.Application.Services.ProjectLock.TryAcquire(CommandHelper.GetDataDirectory()!);
+        if (projectLock == null)
+            return JsonSerializer.Serialize(new { error = BusyMessage }, JsonOptions);
+
         var result = await syncService.SyncAllAsync(force, includeVectors);
 
         return JsonSerializer.Serialize(new

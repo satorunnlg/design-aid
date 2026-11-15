@@ -1115,9 +1115,20 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 （マイグレーション `AddAssetPreviousNames`）を足し、`sync`（asset.json → DB）と `sync --restore-json`（DB → asset.json）の
 両方向でこの欄を運ぶ。`asset update` は record の `with` で書き換えるため欄が残る。
 
-**同時の実行の排他:** 改名の間は、design_aid.db と同じディレクトリの `.daid-rename.lock` を排他で開いて持ち、
-取れなければ待たずに止める。**既知の制約:** `asset link` / `asset unlink` / `part link` など、`asset_links.json` を書く
-ほかの経路はこのロックを取らないので、それらと改名を同時に走らせると、片方の書き込みが失われうる。同時に実行しない。
+**同時の実行の排他（プロジェクト共通ロック `ProjectLock`）:** design_aid.db と同じディレクトリの `.daid.lock` を
+`FileShare.None` + `DeleteOnClose` で開いたハンドルで持つ。**取れなければ待たずに止める**（待つ形は、以前のロック待ちの
+ハングの原因になるので入れない）。ハンドルで持つので、プロセスが落ちても残らない。同じ呼び出しの流れ（AsyncLocal）で
+既に持っているときは二重に取らず、何もしないハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない）。
+「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は EWOULDBLOCK の errno
+= 11 / 35）。場所が無い・容量不足などの IO エラーは busy にせず、元の原因のまま返す。
+
+装置の状態（フォルダ・asset.json・asset_links.json・DB の行・索引）を変える入口がこのロックに参加する:
+`sync`、`asset add / update / remove / rename / link / unlink`、`part link`、`archive asset`・`archive restore`、`restore`
+（復元先が既にあるとき）、MCP の `AddAsset` / `LinkPartToAsset` / `SyncAssets`。読み取りだけの入口（`asset list`・`asset bom`・
+`status`・`search` など）は参加しない。**範囲外（排他していないもの）:** `part add / update / remove`、`archive part`、
+`deploy`、`backup`（ロックファイルは複製しない）、ダッシュボードのインライン編集、`config set`、`setup`。
+これらは装置のフォルダ・asset.json・asset_links.json を書き換えない（または DB の別の表だけを触る）ためだが、
+装置の状態に触れる処理を足したら、ここに参加させること。
 
 **戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
 戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
@@ -1170,7 +1181,10 @@ asset.json の `name` だけを新名に直して `daid sync` してはいけな
 | 利用者のリポジトリ側 | — | 範囲外: ハブの `.gitignore` に装置名が列挙されている場合、git のリモートの名前、`git worktree add` した作業ツリー（`git worktree repair` が要る） |
 
 **名前の検査（`ValidateName`）:** 装置名はそのままフォルダ名になる。空・前後の空白・`.` `..`・末尾の `.`・
-255 文字超・Windows の禁止文字（`<>:"/\|?*` と制御文字）・予約名（`CON` `PRN` `AUX` `NUL` `COM1-9` `LPT1-9`、拡張子付きも）を拒否する。
+255 文字超・Windows の禁止文字（`<>:"/\|?*` と制御文字）・予約名（`CON` `PRN` `AUX` `NUL` `COM1-9` `LPT1-9` と
+上付き数字の `COM¹²³` `LPT¹²³`、拡張子付きも。`COM10` は通す）を拒否する。**新しく付ける名前（改名の新名・`asset add`・MCP の
+`AddAsset`）には、さらに UTF-8 で 255 バイトの上限を課す**（`ValidateNewName`。Linux の一般的なファイルシステムの上限は
+文字数でなくバイト数で、日本語は 1 文字 3 バイト）。旧名にはバイト上限を課さない（既存の長い名前を改名できなくなるため）。
 `asset add` にも同じ検査を入れた（改名後の名前が `add` で作れない名前にならないよう、判定を 1 か所に保つため。終了コード 2）。
 OS の `GetInvalidFileNameChars` は OS ごとに違うので、Windows の禁止文字を固定で含めて結果をそろえている。
 
