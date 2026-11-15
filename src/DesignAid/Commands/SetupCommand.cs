@@ -122,18 +122,30 @@ public class SetupCommand : Command
             }
             else
             {
-                // 既存の .gitignore にロックファイルの行が無ければ追記する
-                var existingLines = await File.ReadAllLinesAsync(gitignorePath);
-                if (!existingLines.Any(l => l.Trim() == DesignAid.Application.Services.ProjectLock.FileName))
+                // 既存の .gitignore にロックファイルの行が無ければ追記する。元の改行（LF / CRLF）にそろえる。
+                // UTF-16 の BOM があるファイルは、UTF-8 で追記すると壊れるので追記せず、警告にする
+                var bytes = await File.ReadAllBytesAsync(gitignorePath);
+                var isUtf16 = bytes.Length >= 2 && ((bytes[0] == 0xFF && bytes[1] == 0xFE) || (bytes[0] == 0xFE && bytes[1] == 0xFF));
+                if (isUtf16)
                 {
-                    var prefix = existingLines.Length > 0 && existingLines[^1].Length > 0 ? Environment.NewLine : "";
-                    await File.AppendAllTextAsync(gitignorePath,
-                        $"{prefix}{Environment.NewLine}# プロジェクト共通のロックファイル{Environment.NewLine}{DesignAid.Application.Services.ProjectLock.FileName}{Environment.NewLine}");
-                    Console.WriteLine($"  [追記] .gitignore（{DesignAid.Application.Services.ProjectLock.FileName}）");
+                    Console.Error.WriteLine($"[WARN] .gitignore が UTF-16 のため追記しませんでした。手で {DesignAid.Application.Services.ProjectLock.FileName} を足してください");
                 }
                 else
                 {
-                    Console.WriteLine($"  [存在] .gitignore");
+                    var existingText = System.Text.Encoding.UTF8.GetString(bytes);
+                    var lines = existingText.Split('\n').Select(l => l.TrimEnd('\r').Trim());
+                    if (!lines.Contains(DesignAid.Application.Services.ProjectLock.FileName))
+                    {
+                        var nl = existingText.Contains("\r\n") ? "\r\n" : "\n";
+                        var prefix = existingText.Length > 0 && !existingText.EndsWith('\n') ? nl : "";
+                        await File.AppendAllTextAsync(gitignorePath,
+                            $"{prefix}{nl}# プロジェクト共通のロックファイル{nl}{DesignAid.Application.Services.ProjectLock.FileName}{nl}");
+                        Console.WriteLine($"  [追記] .gitignore（{DesignAid.Application.Services.ProjectLock.FileName}）");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  [存在] .gitignore");
+                    }
                 }
             }
 

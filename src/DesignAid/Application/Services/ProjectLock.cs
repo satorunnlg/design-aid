@@ -53,6 +53,17 @@ public static class ProjectLock
         }
     }
 
+    /// <summary>
+    /// ファイル名がロックファイルか。Windows と macOS は大文字小文字を区別しないボリュームが既定なので
+    /// 区別せずに比べ、Windows は末尾の <c>.</c> と空白を無視するので、除いた名前でも照らす。
+    /// </summary>
+    public static bool IsLockFileName(string name)
+    {
+        var cmp = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(name, FileName, cmp) || string.Equals(name.TrimEnd(' ', '.'), FileName, cmp);
+    }
+
     private static StringComparison KeyComparison
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 

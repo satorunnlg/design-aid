@@ -590,6 +590,177 @@ public class ProjectLockTests : IDisposable
         Directory.SetCurrentDirectory(_savedCwd);
     }
 
+    // ---- 9 周目の指摘への検査 ----
+
+    [Fact]
+    public async Task 検索キャッシュ_ヘッダーは正しく本体が壊れたbinでも_作り直したキャッシュは次回読める()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        vs.Dispose(); db.Dispose();
+
+        // ヘッダー（判定値）は正しいまま、本体を壊す
+        var header = ReadCacheHeader(cache);
+        var corrupt = System.Text.Encoding.UTF8.GetBytes(header + "\n").Concat(new byte[] { 0xFF, 0xEE, 0xDD, 0xCC, 1, 2, 3 }).ToArray();
+        await File.WriteAllBytesAsync(cache, corrupt);
+
+        using (var db2 = NewDb())
+        using (var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache))
+        {
+            Assert.Equal(2, (await vs2.SearchAsync("旧装置の文書", threshold: -1, limit: 10)).Count); // 作り直して答える
+        }
+        var rebuilt = await File.ReadAllBytesAsync(cache);
+        Assert.NotEqual(corrupt, rebuilt); // 壊れた bin が置き換えられた（開いたままで置き換えに失敗していない）
+
+        using (var db3 = NewDb())
+        using (var vs3 = new VectorSearchService(db3, new MockEmbeddingProvider(8), cache))
+        {
+            Assert.Equal(2, (await vs3.SearchAsync("旧装置の文書", threshold: -1, limit: 10)).Count);
+        }
+        Assert.Equal(rebuilt, await File.ReadAllBytesAsync(cache)); // 次回は読めたので、作り直されていない
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_書き込みの前に_1日以上前の一時ファイルだけを消す()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        using (vs) using (db)
+        {
+            var oldTmp = cache + ".aaaa.tmp";
+            var freshTmp = cache + ".bbbb.tmp";
+            await File.WriteAllTextAsync(oldTmp, "x");
+            await File.WriteAllTextAsync(freshTmp, "y");
+            File.SetLastWriteTimeUtc(oldTmp, DateTime.UtcNow.AddDays(-2));
+
+            await vs.RebuildIndexAsync(); // 書き込みの前に掃除する
+
+            Assert.False(File.Exists(oldTmp));
+            Assert.True(File.Exists(freshTmp)); // 書いている最中かもしれないものは消さない
+        }
+    }
+
+    [Fact]
+    public async Task Backup_検索のキャッシュと一時ファイルは含めず_キャッシュを書いている最中でも落ちない()
+    {
+        await AddAssetAsync("old");
+        var work = Path.Combine(_root, "cwd2");
+        Directory.CreateDirectory(work);
+        Directory.SetCurrentDirectory(work);
+        await File.WriteAllTextAsync(Path.Combine(_root, "hnsw_index.bin"), "cache");
+        await File.WriteAllTextAsync(Path.Combine(_root, "hnsw_index.bin.abc.tmp"), "tmp");
+        await File.WriteAllTextAsync(Path.Combine(_root, "work.tmp"), "tmp");
+
+        int code; string err;
+        using (new FileStream(Path.Combine(_root, "hnsw_index.bin.abc.tmp"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            (code, _, err) = await RunAsync(new DesignAid.Commands.BackupCommand(), "--local-only");
+        }
+
+        Assert.Equal(0, code);
+        var zipPath = Assert.Single(Directory.GetFiles(work, "design-aid-backup_*.zip"));
+        using var zip = System.IO.Compression.ZipFile.OpenRead(zipPath);
+        var names = zip.Entries.Select(e => e.FullName.Replace('\\', '/')).ToList();
+        Assert.Contains("assets/old/asset.json", names);
+        Assert.DoesNotContain(names, n => n.Contains("hnsw_index.bin") || n.EndsWith(".tmp"));
+        Directory.SetCurrentDirectory(_savedCwd);
+    }
+
+    [Fact]
+    public async Task Restore_ロックファイルの名前の照合は_大小文字と末尾のドットや空白を無視する()
+    {
+        var names = new List<string>();
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+            names.AddRange(new[] { ".DAID.LOCK", "sub/.Daid.Lock" });
+        if (OperatingSystem.IsWindows())
+            names.AddRange(new[] { ".daid.lock.", ".daid.lock " });
+        names.Add(ProjectLock.FileName);
+        names.Add("assets/b/asset.json");
+
+        var zipPath = Path.Combine(_root, "backup2.zip");
+        using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            foreach (var n in names.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                using var w = new StreamWriter(zip.CreateEntry(n).Open());
+                w.Write("{}");
+            }
+        }
+
+        var (code, _, err) = await RunAsync(new DesignAid.Commands.RestoreCommand(), zipPath, "--data-path", _root, "--force");
+
+        Assert.Equal(0, code);
+        Assert.DoesNotContain("ERROR", err);
+        Assert.True(File.Exists(Path.Combine(_assetsDir, "b", "asset.json")));
+    }
+
+    [Fact]
+    public void ProjectLock_IsLockFileName_通常の名前は違う()
+    {
+        Assert.True(ProjectLock.IsLockFileName(".daid.lock"));
+        Assert.False(ProjectLock.IsLockFileName(".daid.lock.bak"));
+        Assert.False(ProjectLock.IsLockFileName("daid.lock"));
+        Assert.False(ProjectLock.IsLockFileName("asset.json"));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True(ProjectLock.IsLockFileName(".daid.lock."));
+            Assert.True(ProjectLock.IsLockFileName(".daid.lock "));
+        }
+    }
+
+    [Fact]
+    public async Task Restore_zip_slip_展開先の外を指すエントリがあれば_何も展開せずに止める()
+    {
+        var outside = Path.Combine(Path.GetTempPath(), "design-aid-zipslip-" + Guid.NewGuid().ToString("N") + ".txt");
+        var zipPath = Path.Combine(_root, "evil.zip");
+        using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            foreach (var n in new[] { "assets/ok/asset.json", "../" + Path.GetFileName(outside) })
+            {
+                using var w = new StreamWriter(zip.CreateEntry(n).Open());
+                w.Write("{}");
+            }
+        }
+        var expectedEscape = Path.Combine(Path.GetDirectoryName(_root)!, Path.GetFileName(outside));
+
+        var (code, _, err) = await RunAsync(new DesignAid.Commands.RestoreCommand(), zipPath, "--data-path", _root, "--force");
+
+        Assert.NotEqual(0, code);
+        Assert.False(File.Exists(expectedEscape));                         // 外には書かれない
+        Assert.False(File.Exists(Path.Combine(_assetsDir, "ok", "asset.json"))); // 何も展開されない
+        Assert.Contains("展開先の外", err);
+    }
+
+    [Fact]
+    public async Task Setup_gitignoreの追記は元の改行にそろえ_UTF16なら追記せず警告する()
+    {
+        var work = Path.Combine(_root, "setup-cwd2");
+        Directory.CreateDirectory(work);
+        Directory.SetCurrentDirectory(work);
+
+        var crlf = Path.Combine(work, "crlf"); Directory.CreateDirectory(crlf);
+        await File.WriteAllBytesAsync(Path.Combine(crlf, ".gitignore"), System.Text.Encoding.UTF8.GetBytes("*.db\r\nfoo/\r\n"));
+        var lf = Path.Combine(work, "lf"); Directory.CreateDirectory(lf);
+        await File.WriteAllBytesAsync(Path.Combine(lf, ".gitignore"), System.Text.Encoding.UTF8.GetBytes("*.db\nfoo/\n"));
+        var u16 = Path.Combine(work, "u16"); Directory.CreateDirectory(u16);
+        var u16Bytes = new System.Text.UnicodeEncoding(false, true).GetPreamble()
+            .Concat(new System.Text.UnicodeEncoding(false, false).GetBytes("*.db\r\n")).ToArray();
+        await File.WriteAllBytesAsync(Path.Combine(u16, ".gitignore"), u16Bytes);
+
+        await RunAsync(new DesignAid.Commands.SetupCommand(), "crlf");
+        await RunAsync(new DesignAid.Commands.SetupCommand(), "lf");
+        var (_, _, u16Err) = await RunAsync(new DesignAid.Commands.SetupCommand(), "u16");
+
+        var crlfText = await File.ReadAllTextAsync(Path.Combine(crlf, ".gitignore"));
+        Assert.Contains(".daid.lock", crlfText);
+        Assert.DoesNotContain("\n", crlfText.Replace("\r\n", "")); // CRLF のまま。裸の LF が無い
+        var lfText = await File.ReadAllTextAsync(Path.Combine(lf, ".gitignore"));
+        Assert.Contains(".daid.lock", lfText);
+        Assert.DoesNotContain("\r", lfText);                           // LF のまま
+        Assert.Equal(u16Bytes, await File.ReadAllBytesAsync(Path.Combine(u16, ".gitignore"))); // UTF-16 は追記しない
+        Assert.Contains("UTF-16", u16Err);
+        Directory.SetCurrentDirectory(_savedCwd);
+    }
+
     // ---- --json の早期の失敗 ----
 
     private static void AssertSingleFailureJson(string stdout)

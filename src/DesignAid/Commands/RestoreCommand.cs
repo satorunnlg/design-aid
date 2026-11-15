@@ -196,6 +196,15 @@ public class RestoreCommand : Command
     /// </summary>
     private static async Task ExtractDataFilesAsync(ZipArchive archive, string destDir)
     {
+        // 展開する前に、全エントリが展開先の下に収まることを確かめる（zip-slip）。
+        // 1 つでも外を指していれば、何も展開せずに止める
+        var escaping = DesignAid.Application.Services.SafeZip.FindEscapingEntry(
+            destDir, archive.Entries.Select(e => e.FullName));
+        if (escaping != null)
+        {
+            throw new InvalidDataException($"バックアップに、展開先の外を指すエントリがあります: {escaping}（何も展開しませんでした）");
+        }
+
         Directory.CreateDirectory(destDir);
 
         foreach (var entry in archive.Entries)
@@ -208,7 +217,7 @@ public class RestoreCommand : Command
 
             // ロックファイル（サブディレクトリの同じ名前も含む）は展開しない。
             // 復元中は自分がそのファイルを開いているので、上書きしようとすると失敗する
-            if (entry.Name == DesignAid.Application.Services.ProjectLock.FileName)
+            if (DesignAid.Application.Services.ProjectLock.IsLockFileName(entry.Name))
             {
                 continue;
             }

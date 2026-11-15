@@ -16,7 +16,8 @@ public class ProjectLockCoverageTests
     private static readonly Regex WriteMarkers = new(
         @"SaveChanges|File\.(Write|Copy|Delete|Move|Replace|Create|AppendAll)|new\s+StreamWriter|new\s+FileStream|" +
         @"Directory\.(Delete|Move|CreateDirectory)|ZipFile\.(ExtractToDirectory|CreateFromDirectory)|ForceDeleteDirectory|" +
-        @"ExecuteDelete|ExecuteSql|Process\.Start|\.AddAsync\(|\.LinkToAssetAsync\(|\.SyncAllAsync\(",
+        @"ExecuteDelete|ExecuteSql|ExecuteNonQuery|Process\.Start|ExtractToFile|File\.Open\(|File\.SetAttributes|RemoveRange|" +
+        @"\.AddAsync\(|\.LinkToAssetAsync\(|\.SyncAllAsync\(",
         RegexOptions.Compiled);
 
     /// <summary>ロックの取得。<c>using</c> の宣言か文の中で、取得の呼び出しをしていること。</summary>
@@ -53,6 +54,23 @@ public class ProjectLockCoverageTests
         ["Commands/VerifyCommand.cs"] = "検査のレポートの出力だけ",
         ["Commands/SearchCommand.cs"] = "検索のキャッシュ（hnsw_index.bin）の書き込みだけ。装置の状態ではなくキャッシュで、" +
             "一時ファイルへ書いてから置き換える（原子的）。読む側は判定値がずれていれば使わず作り直す",
+        ["Dashboard/Services/DashboardService.cs#DashboardService"] = "コンストラクタ（書き込みをしない）",
+        ["Dashboard/Services/DashboardService.cs#GetSummaryAsync"] = "読み取りだけ",
+        ["Dashboard/Services/DashboardService.cs#GetPartsAsync"] = "読み取りだけ",
+        ["Dashboard/Services/DashboardService.cs#GetAssetsAsync"] = "読み取りだけ",
+        ["Dashboard/Services/DashboardService.cs#GetAssetDetailAsync"] = "読み取りだけ",
+        ["Dashboard/Services/DashboardService.cs#RunIntegrityCheckAsync"] = "読み取りだけ（ハッシュの照合）",
+        ["Dashboard/Services/DashboardService.cs#SearchPartsAsync"] = "検索のキャッシュを読み書きするだけ（キャッシュであって装置の状態ではなく、原子的に書く）",
+        ["Mcp/DesignAidMcpTools.cs#SelectInstructionsFile"] = "ツールではなく、指示ファイルを選ぶだけの関数（読み取りだけ）",
+        ["Mcp/DesignAidMcpTools.cs#ListAssets"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#ListParts"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#GetPartDetails"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#CheckIntegrity"] = "読み取りだけ（ハッシュの照合）",
+        ["Mcp/DesignAidMcpTools.cs#VerifyStandards"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#GetAssetParts"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#GetStatus"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#GetProjectContext"] = "読み取りだけ",
+        ["Mcp/DesignAidMcpTools.cs#GetDevCommands"] = "読み取りだけ",
         ["Mcp/DesignAidMcpTools.cs#SearchDesigns"] = "検索のキャッシュの書き込みだけ（SearchCommand と同じ。キャッシュであって装置の状態ではなく、原子的に書く）",
     };
 
@@ -95,7 +113,10 @@ public class ProjectLockCoverageTests
             var text = StripCommentsAndStrings(File.ReadAllText(Path.Combine(srcRoot, rel)));
             foreach (var chunk in MemberStart.Split(text))
             {
-                if (!chunk.TrimStart().StartsWith("public") || !WriteMarkers.IsMatch(chunk)) continue;
+                // public のメソッドは、すべてロックを取るか、免除の表に理由を書く（private の部品へ書き込みを任せる形は辿らない）
+                if (!chunk.TrimStart().StartsWith("public")) continue;
+                // メソッドだけ（プロパティやフィールドは、宣言の頭から最初の { ; = までに「(」が無い）
+                if (!Regex.Match(chunk, @"^[^{;=]*").Value.Contains('(')) continue;
                 var name = MethodName(chunk);
                 if (exempt.ContainsKey($"{rel}#{name}")) continue;
                 if (!LockUse.IsMatch(chunk)) problems.Add($"{rel}#{name}");
@@ -147,13 +168,21 @@ public class ProjectLockCoverageTests
                 "    Task<int> Second(int x) { Process.Start(p); return null; }\n}");
             // 書き込みの目印: ExecuteSql / ExecuteDelete
             Write(tmp, "Commands/SqlCommand.cs", "class Q {\n    Q() { Handler = CommandHandler.Create(E); }\n    void E() { db.Database.ExecuteSqlRaw(x); }\n}");
+            foreach (var (n, body) in new[] { ("Extract", "entry.ExtractToFile(p, true);"), ("Open", "File.Open(p, m);"),
+                         ("Attr", "File.SetAttributes(p, a);"), ("Remove", "ctx.Set.RemoveRange(x);"), ("NonQuery", "cmd.ExecuteNonQuery();") })
+            {
+                Write(tmp, $"Commands/{n}Command.cs", "class Z {\n    Z() { Handler = CommandHandler.Create(E); }\n    void E() { " + body + " }\n}");
+            }
             Directory.CreateDirectory(Path.Combine(tmp, "Dashboard", "Services"));
             Directory.CreateDirectory(Path.Combine(tmp, "Mcp"));
             Write(tmp, "Dashboard/Services/DashboardService.cs",
-                "class D {\n    public void Bad() { ctx.SaveChanges(); }\n    public void Good() { using var l = ProjectLock.TryAcquire(x); ctx.SaveChanges(); }\n    public void Read() { }\n}");
+                "class D {\n    public void Unlisted() { }\n    public void Bad() { ctx.SaveChanges(); }\n    public void Good() { using var l = ProjectLock.TryAcquire(x); ctx.SaveChanges(); }\n    public void Read() { }\n}");
             Write(tmp, "Mcp/DesignAidMcpTools.cs", "class M {\n    public void Add() { svc.AddAsync(a); }\n}");
 
-            var problems = FindUnlockedEntries(tmp, new Dictionary<string, string>());
+            var problems = FindUnlockedEntries(tmp, new Dictionary<string, string>
+            {
+                ["Dashboard/Services/DashboardService.cs#Read"] = "読み取りだけ",
+            });
 
             Assert.Contains("Commands/BadCommand.cs#E", problems);
             Assert.DoesNotContain("Commands/GoodCommand.cs#E", problems);
@@ -163,8 +192,11 @@ public class ProjectLockCoverageTests
             Assert.Contains("Commands/TwoCommand.cs#Second", problems);
             Assert.DoesNotContain("Commands/TwoCommand.cs#First", problems);
             Assert.Contains("Commands/SqlCommand.cs#E", problems);
+            foreach (var n in new[] { "Extract", "Open", "Attr", "Remove", "NonQuery" })
+                Assert.Contains($"Commands/{n}Command.cs#E", problems);
             Assert.Contains("Dashboard/Services/DashboardService.cs#Bad", problems);
             Assert.DoesNotContain(problems, p => p.EndsWith("#Good") || p.EndsWith("#Read"));
+            Assert.Contains("Dashboard/Services/DashboardService.cs#Unlisted", problems); // 書き込みの目印が無くても、免除が無ければ止める
             Assert.Contains("Mcp/DesignAidMcpTools.cs#Add", problems);
         }
         finally

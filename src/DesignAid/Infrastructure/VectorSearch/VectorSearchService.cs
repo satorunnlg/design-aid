@@ -449,12 +449,14 @@ public class VectorSearchService : IDisposable
         // 一致するときだけ（件数が同じでも行が入れ替わったキャッシュを、取り違えて使わない）
         var entriesStamp = StampOf(entries);
         // 読み取りはすべて TryOpenCache の中で守る（別のプロセスが消したり書いたりしていても、検索を落とさない）
-        using var cacheStream = TryOpenCache(entriesStamp.ToText());
+        // ストリームは、読み終えたら（失敗したときも）再構築の前に閉じる。開いたままだと、再構築が bin を
+        // 置き換えられず（Windows）、キャッシュが二度と直らない
+        var cacheStream = TryOpenCache(entriesStamp.ToText());
         if (cacheStream != null)
         {
             try
             {
-                var stream = cacheStream;
+                using var stream = cacheStream;
                 var deserialized = SmallWorld<float[], float>.DeserializeGraph(
                     vectors,
                     CosineDistance.SIMDForUnits,
@@ -497,6 +499,8 @@ public class VectorSearchService : IDisposable
                 Directory.CreateDirectory(directory);
             }
 
+            DeleteStaleTempFiles();
+
             // 判定値をヘッダーに入れて 1 つのファイルにし、一時の名前で書いてから置き換える（原子的）。
             // 読む側は、途中まで書かれたファイルや、判定値だけ新しいファイルを見ない
             var tmp = _hnswIndexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -509,7 +513,23 @@ public class VectorSearchService : IDisposable
                     _hnswIndex.SerializeGraph(stream);
                     await stream.FlushAsync();
                 }
-                File.Move(tmp, _hnswIndexPath, overwrite: true);
+                try
+                {
+                    File.Move(tmp, _hnswIndexPath, overwrite: true);
+                }
+                catch (IOException)
+                {
+                    // 置き換えに失敗したら、古い bin を消してからもう一度。それでも失敗したら警告を記録する
+                    try
+                    {
+                        File.Delete(_hnswIndexPath);
+                        File.Move(tmp, _hnswIndexPath, overwrite: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[WARN] 検索のキャッシュを置き換えられませんでした（次回の検索で作り直します）: {ex.Message}");
+                    }
+                }
             }
             finally
             {
@@ -520,6 +540,34 @@ public class VectorSearchService : IDisposable
         catch
         {
             // シリアライズ失敗は致命的ではない（次回再構築する）
+        }
+    }
+
+    /// <summary>
+    /// 強制終了などで残った書き込み途中の一時ファイル（<c>hnsw_index.bin.*.tmp</c>）のうち、
+    /// 1 日以上前のものだけを消す（書いている最中のものは消さない）。
+    /// </summary>
+    private void DeleteStaleTempFiles()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(_hnswIndexPath));
+            if (dir == null || !Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, Path.GetFileName(_hnswIndexPath) + ".*.tmp"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(f) < DateTime.UtcNow.AddDays(-1)) File.Delete(f);
+                }
+                catch
+                {
+                    // 消せなければ次回
+                }
+            }
+        }
+        catch
+        {
+            // 掃除の失敗は書き込みを妨げない
         }
     }
 
