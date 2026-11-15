@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （`CommandHelper.HumanOutput`）。同じ種類として、`asset bom --json --export csv` が JSON でなく CSV を標準出力へ出していたのも直した
   （`--json` を優先し、CSV は出さずに警告を標準エラーへ）。`--json` を持つ全コマンドを成功の経路で動かす検査
   （`JsonStdoutContractTests`。コマンドは `BuildRootCommand()` から列挙する）を足した
+- `sync --json` が、`components/` があるとき変更の一覧を出すだけで、`--json` でない経路が行う処理（DB 同期、`--restore-json` の復元、
+  `--include-vectors` のベクトル同期）をすべて飛ばしていた。`--json` の有無で行う処理を同じにし、違うのは出力の形だけにした
+  （人向けの出力は標準エラーへ。JSON には `database`・`assetJsonRestored`・`vectorIndex` で結果が入る。DB 同期などに失敗すると `success` が偽になる）。
+  `sync` と `sync --json` を同じ状態の 2 つのプロジェクトで動かし、DB の行とファイルが一致することを、`--dry-run`・`--restore-json`・
+  `--force`・`--skip-db`・components なしの組み合わせで固定した（#10）
 - `--json` を付けたまま引数の解析に失敗したとき（例: `asset list --json --bogus`）、ヘルプの文が標準出力に出ていた。
   標準出力は失敗の JSON 1 つだけ、診断は標準エラー、終了コードは 1 になる（#10）
 - プロジェクトのロックの再入の判定が macOS でも大文字小文字を区別しており（`Ordinal`）、既定の大小文字を区別しないボリュームで、

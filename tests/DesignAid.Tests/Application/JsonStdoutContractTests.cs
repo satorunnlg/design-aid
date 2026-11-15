@@ -12,7 +12,7 @@ namespace DesignAid.Tests.Application;
 /// 実データには触れない（すべて一時ディレクトリ）。
 /// </summary>
 [Collection("CommandEnv")]
-public class JsonStdoutContractTests : IDisposable
+public partial class JsonStdoutContractTests : IDisposable
 {
     private readonly string _base = Path.Combine(Path.GetTempPath(), "design-aid-json-stdout-tests", Guid.NewGuid().ToString());
     private readonly string? _savedEnv = Environment.GetEnvironmentVariable("DA_DATA_DIR");
