@@ -1189,6 +1189,37 @@ public class AssetRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Rename_実行中の改名がある間に別の改名を呼ぶと止まり_終わった後は通る()
+    {
+        await AddAssetAsync("a");
+        await AddAssetAsync("b");
+        var reached = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+
+        // 1 つ目: フォルダを移した直後で止めておく（ロックを持ったまま）
+        var first = Task.Run(() => RenameAsync("a", "a2", async step =>
+        {
+            if (step == "after-move")
+            {
+                reached.SetResult();
+                await release.Task;
+            }
+        }));
+        await reached.Task;
+
+        var second = await RenameAsync("b", "b2"); // 2 つ目: 待たずに止まる
+        Assert.False(second.Success);
+        Assert.Contains(second.Errors, e => e.Contains("別の改名が実行中"));
+        Assert.True(Directory.Exists(Path.Combine(_assetsDir, "b"))); // 何も変わっていない
+
+        release.SetResult();
+        Assert.True((await first).Success);
+
+        var third = await RenameAsync("b", "b2"); // 終わった後は通る
+        Assert.True(third.Success, string.Join(" / ", third.Errors) + third.Failure);
+    }
+
+    [Fact]
     public async Task Rename_失敗した後もロックは残らず_続けて改名できる()
     {
         await AddAssetAsync("old");
