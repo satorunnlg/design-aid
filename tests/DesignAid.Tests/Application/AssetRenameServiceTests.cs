@@ -520,6 +520,248 @@ public class AssetRenameServiceTests : IDisposable
         Assert.Equal(dbRows, await SnapshotDbAsync());
     }
 
+    // ---- Codex レビュー指摘への検査 ----
+
+    private string ArchiveIndexPath => Path.Combine(_root, "archive_index.json");
+
+    private Task WriteArchiveIndexAsync(params string[] archivedAssetNames)
+    {
+        var entries = string.Join(",", archivedAssetNames.Select(n =>
+            $"{{\"type\":\"asset\",\"name\":\"{n}\",\"archived_at\":\"2026-01-01T00:00:00Z\"}}"));
+        return File.WriteAllTextAsync(ArchiveIndexPath, $"{{\"archived\":[{entries}]}}");
+    }
+
+    private string WriteArchiveZip(string parentName, string? linksJson)
+    {
+        var dir = Path.Combine(_root, "archive", "assets");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, parentName + ".zip");
+        using var zip = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Create);
+        var asset = zip.CreateEntry("asset.json");
+        using (var w = new StreamWriter(asset.Open())) w.Write("{}");
+        if (linksJson != null)
+        {
+            var links = zip.CreateEntry("asset_links.json");
+            using var w = new StreamWriter(links.Open());
+            w.Write(linksJson);
+        }
+        return path;
+    }
+
+    private Dictionary<string, string> SnapshotRoot()
+    {
+        var map = SnapshotFiles();
+        foreach (var f in Directory.GetFiles(_root, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(_root, f).Replace('\\', '/');
+            if (rel.StartsWith("assets/") || rel.StartsWith("design_aid.db")) continue;
+            map["ROOT:" + rel] = Convert.ToBase64String(File.ReadAllBytes(f));
+        }
+        return map;
+    }
+
+    [Theory]
+    [InlineData("abs")]
+    [InlineData("../outside/x")]
+    [InlineData("..")]
+    public async Task Rename_旧名がassetsの外を指す_何も変えずに止める(string kind)
+    {
+        // assets の外に、asset.json を持つディレクトリを用意する
+        var outside = Path.Combine(_root, "outside", "x");
+        Directory.CreateDirectory(outside);
+        await _json.CreateAsync(outside, Guid.NewGuid(), "x");
+        await AddAssetAsync("keep");
+        var oldName = kind == "abs" ? outside : kind;
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync(oldName, "new");
+
+        Assert.False(r.Success);
+        Assert.NotEmpty(r.Errors);
+        Assert.Equal(files, SnapshotRoot());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        Assert.True(File.Exists(Path.Combine(outside, "asset.json")));
+    }
+
+    [Fact]
+    public async Task Rename_旧名が単一の通常名なら_assets直下の検査を通って成功する()
+    {
+        await AddAssetAsync("old", inDb: false); // JSON のみの装置も拒否されない
+        var r = await RenameAsync("old", "new");
+        Assert.True(r.Success, string.Join(" / ", r.Errors));
+    }
+
+    [Fact]
+    public async Task Rename_旧名の大文字小文字が違う_補正せずDBの行も行数もリンクも変えずに止める()
+    {
+        var id = await AddAssetAsync("old");
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("OLD", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("old")); // 正しい名前を出す
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        using var db = NewDb();
+        Assert.Equal(id, (await db.Assets.AsNoTracking().SingleAsync()).Id);
+    }
+
+    [Fact]
+    public async Task Rename_大文字小文字だけ違う別の装置がDBにある_何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        using (var db = NewDb())
+        {
+            db.Assets.Add(Asset.Create("OLD", Path.Combine(_root, "elsewhere", "OLD"), "OLD", ""));
+            await db.SaveChangesAsync();
+        }
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("OLD"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_JSONとDBのIDが違っても_両方のIDの文書索引を更新し無関係な行は触らない()
+    {
+        var jsonId = await AddAssetAsync("old", inDb: false);
+        var dbId = Guid.NewGuid();
+        var otherId = Guid.NewGuid();
+        using (var db = NewDb())
+        {
+            db.Assets.Add(Asset.Create("old", Path.Combine(_assetsDir, "old"), "old", "", dbId));
+            VectorIndexEntry E(Guid aid, string aname, string type, string file) => new()
+            {
+                PartId = Guid.NewGuid().ToString(),
+                PartNumber = $"[DOC] {aname}/{file}",
+                Content = "c",
+                Embedding = new byte[] { 1 },
+                Dimensions = 1,
+                AssetId = aid.ToString(),
+                AssetName = aname,
+                Type = type,
+                FilePath = $"assets/{aname}/{file}",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            db.VectorIndex.AddRange(
+                E(jsonId, "old", "asset_doc", "DESIGN.md"),   // 文書索引は asset.json の ID で登録される
+                E(dbId, "old", "spec", "x.md"),
+                E(otherId, "other", "asset_doc", "DESIGN.md"));
+            await db.SaveChangesAsync();
+        }
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        Assert.Equal(2, r.VectorRowsUpdated);
+        using var check = NewDb();
+        var rows = await check.VectorIndex.AsNoTracking().OrderBy(v => v.Id).ToListAsync();
+        Assert.Equal("new", rows[0].AssetName);
+        Assert.Equal("[DOC] new/DESIGN.md", rows[0].PartNumber);
+        Assert.Equal("assets/new/DESIGN.md", rows[0].FilePath);
+        Assert.Equal("new", rows[1].AssetName);
+        Assert.Equal("other", rows[2].AssetName);
+        Assert.Equal("[DOC] other/DESIGN.md", rows[2].PartNumber);
+    }
+
+    [Fact]
+    public async Task Rename_アーカイブ済みの装置_何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        Directory.Delete(Path.Combine(_assetsDir, "old"), true); // archive asset はフォルダを消し、DB の行は残す
+        await WriteArchiveIndexAsync("old");
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("archive restore"));
+        Assert.Equal(files, SnapshotRoot());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_フォルダの無いDBだけの装置は_アーカイブ済みでなければ改名できる()
+    {
+        await AddAssetAsync("old");
+        Directory.Delete(Path.Combine(_assetsDir, "old"), true);
+        await WriteArchiveIndexAsync("someone-else"); // 別の装置のアーカイブは妨げない
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        using var db = NewDb();
+        Assert.Equal("new", (await db.Assets.AsNoTracking().SingleAsync()).Name);
+    }
+
+    [Fact]
+    public async Task Rename_アーカイブ内のasset_linksが旧名を参照している_何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        var zip = WriteArchiveZip("parent", """{"child_assets":[{"child_asset_name":"old","quantity":1}]}""");
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("parent") && e.Contains("archive restore"));
+        Assert.Equal(files, SnapshotRoot());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        Assert.True(File.Exists(zip));
+    }
+
+    [Fact]
+    public async Task Rename_参照の無いアーカイブは改名を妨げない()
+    {
+        await AddAssetAsync("old");
+        WriteArchiveZip("other-parent", """{"child_assets":[{"child_asset_name":"unrelated","quantity":1}]}""");
+        WriteArchiveZip("no-links", null);
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    [Fact]
+    public async Task ApplyPendingMigrations_旧スキーマのDBは初回に更新され_適用済みなら何もしない()
+    {
+        var path = Path.Combine(_root, "old-schema.db");
+        var options = new DbContextOptionsBuilder<DesignAidDbContext>().UseSqlite($"Data Source={path}").Options;
+
+        // PreviousNames 列を足す前（AddAssetStatusAndTags まで）のスキーマを作る
+        using (var ctx = new DesignAidDbContext(options))
+        {
+            var migrator = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+                .GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(ctx);
+            migrator.Migrate("20260219130118_AddAssetStatusAndTags");
+        }
+
+        using (var ctx = new DesignAidDbContext(options))
+        {
+            // 列が無いので、追加後のモデルでの検索は失敗する（ダッシュボードが起動時に受けた失敗）
+            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Assets.AsNoTracking().ToListAsync());
+            Assert.True(DesignAid.Commands.CommandHelper.ApplyPendingMigrations(ctx));
+            Assert.Empty(await ctx.Assets.AsNoTracking().ToListAsync());
+        }
+
+        using (var ctx = new DesignAidDbContext(options))
+        {
+            Assert.False(DesignAid.Commands.CommandHelper.ApplyPendingMigrations(ctx)); // 無条件の Migrate はしない
+        }
+        SqliteConnection.ClearAllPools();
+    }
+
     // ---- asset.json の往復（previous_names を落とさない）----
 
     [Fact]

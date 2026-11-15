@@ -61,7 +61,25 @@ public static class AssetRenamePlanner
         bool OldAssetJsonUnreadable,
         bool NewInDb,
         bool NewHasAssetJson,
-        bool NewPathExists);
+        bool NewPathExists,
+        bool OldDirOutsideAssets = false,
+        bool OldArchived = false,
+        IReadOnlyList<string>? OldCaseVariants = null,
+        IReadOnlyList<string>? ArchivesReferencingOld = null);
+
+    /// <summary>
+    /// <paramref name="path"/> を正規化した親が <paramref name="assetsDir"/> と一致するか（assets 直下か）。
+    /// 絶対パスや <c>..</c> で assets の外を指していないかの確認に使う。
+    /// </summary>
+    public static bool IsDirectChildOf(string assetsDir, string path)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (parent == null) return false;
+        var root = Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        parent = parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(parent, root, cmp);
+    }
 
     /// <summary>
     /// 改名を始めてよいかを判定する。<b>1 つでも当てはまれば何も変えずに止める</b>ための一覧を返す。
@@ -70,6 +88,19 @@ public static class AssetRenamePlanner
     public static IReadOnlyList<string> CheckPreconditions(Facts f)
     {
         var errors = new List<string>();
+
+        // 旧名も単一のディレクトリ名に限る（絶対パスや .. で assets の外を指させない）
+        var oldNameError = ValidateName(f.OldName);
+        if (oldNameError != null)
+        {
+            errors.Add($"旧名が使えません: {oldNameError}");
+            return errors;
+        }
+        if (f.OldDirOutsideAssets)
+        {
+            errors.Add($"旧名が assets 直下の装置ディレクトリを指していません: {f.OldName}");
+            return errors;
+        }
 
         var nameError = ValidateName(f.NewName);
         if (nameError != null)
@@ -93,6 +124,17 @@ public static class AssetRenamePlanner
 
         if (!f.OldInDb && !f.OldHasAssetJson)
             errors.Add($"改名元の装置が見つかりません: {f.OldName}（DB にも asset.json にもありません）");
+
+        // 大小文字だけ違う名前（asset.json の name・DB の Name・別の装置）があれば、補正せずに拒否する。
+        // 補正すると DB の更新を迂回したり、別の装置を巻き込んだりする。
+        if (f.OldCaseVariants is { Count: > 0 })
+            errors.Add($"旧名 '{f.OldName}' と大文字小文字だけが違う名前の装置があります: {string.Join(", ", f.OldCaseVariants)}（正しい名前をそのまま指定してください。別の装置の場合は改名できません）");
+
+        if (f.OldArchived)
+            errors.Add($"改名元の装置はアーカイブ済みです: {f.OldName}（先に daid archive restore asset {f.OldName} で復元してください）");
+
+        if (f.ArchivesReferencingOld is { Count: > 0 })
+            errors.Add($"アーカイブ内の asset_links.json が旧名 '{f.OldName}' を子装置として参照しています: {string.Join(", ", f.ArchivesReferencingOld)}（その親装置を先に daid archive restore asset で復元してください）");
 
         if (f.OldHasAssetJson && f.OldAssetJsonUnreadable)
             errors.Add($"改名元の asset.json を読み込めません: {f.OldName}");

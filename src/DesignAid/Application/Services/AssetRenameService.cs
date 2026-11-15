@@ -59,11 +59,39 @@ public class AssetRenameService
             return result;
         }
 
+        // 旧名が不正なら、パスを組み立てる前に止める（絶対パスや .. を Path.Combine へ渡さない）
+        var oldNameError = AssetRenamePlanner.ValidateName(oldName);
+        if (oldNameError != null)
+        {
+            result.Errors.Add($"旧名が使えません: {oldNameError}");
+            return result;
+        }
+        if (!AssetRenamePlanner.IsDirectChildOf(assetsDir, oldDir))
+        {
+            result.Errors.Add($"旧名が assets 直下の装置ディレクトリを指していません: {oldName}");
+            return result;
+        }
+
         var dbAsset = await _db.Assets.FirstOrDefaultAsync(a => a.Name == oldName, ct);
         var hasJson = Directory.Exists(oldDir) && _jsonReader.Exists(oldDir);
         var json = hasJson ? await _jsonReader.ReadAsync(oldDir, ct) : null;
 
         var allNames = await _db.Assets.AsNoTracking().Select(a => a.Name).ToListAsync(ct);
+
+        // 大小文字だけ違う名前: asset.json の name、DB の Name、assets/ の別のディレクトリ
+        bool Variant(string? n) => n != null && n != oldName && string.Equals(n, oldName, StringComparison.OrdinalIgnoreCase);
+        var variants = new List<string>();
+        if (Variant(json?.Name)) variants.Add(json!.Name);
+        variants.AddRange(allNames.Where(Variant));
+        if (Directory.Exists(assetsDir))
+            variants.AddRange(Directory.GetDirectories(assetsDir).Select(d => Path.GetFileName(d)).Where(Variant));
+        variants = variants.Distinct(StringComparer.Ordinal).ToList();
+
+        // アーカイブ（archive_index.json と archive/assets/*.zip）
+        var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
+        var archived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), oldName);
+        var referencing = FindArchivesReferencing(Path.Combine(dataDir, "archive", "assets"), oldName);
+
         var facts = new AssetRenamePlanner.Facts(
             OldName: oldName,
             NewName: newName,
@@ -72,7 +100,11 @@ public class AssetRenameService
             OldAssetJsonUnreadable: hasJson && json == null,
             NewInDb: allNames.Any(n => string.Equals(n, newName, StringComparison.OrdinalIgnoreCase)),
             NewHasAssetJson: Directory.Exists(newDir) && _jsonReader.Exists(newDir),
-            NewPathExists: Directory.Exists(newDir) || File.Exists(newDir));
+            NewPathExists: Directory.Exists(newDir) || File.Exists(newDir),
+            OldDirOutsideAssets: false,
+            OldArchived: archived,
+            OldCaseVariants: variants,
+            ArchivesReferencingOld: referencing);
 
         var errors = AssetRenamePlanner.CheckPreconditions(facts);
         if (errors.Count > 0)
@@ -115,10 +147,21 @@ public class AssetRenameService
                 }
 
                 result.FolderMoved = true;
-                undo.Add(("フォルダの移動", () =>
+                undo.Add(("フォルダの移動", async () =>
                 {
-                    Directory.Move(newDir, oldDir);
-                    return Task.CompletedTask;
+                    // 移した直後は Windows のウイルス対策・インデクサが一時的にフォルダを掴むことがあるため、数回やり直す
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        try
+                        {
+                            Directory.Move(newDir, oldDir);
+                            return;
+                        }
+                        catch (Exception ex) when (attempt < 5 && ex is IOException or UnauthorizedAccessException)
+                        {
+                            await Task.Delay(200 * attempt);
+                        }
+                    }
                 }, () => result.FolderMoved = false));
                 await RunHookAsync("after-move");
             }
@@ -200,7 +243,11 @@ public class AssetRenameService
                     result.DisplayName ??= dbAsset.DisplayName;
 
                     // ベクトル索引は装置を名前とパスで持っている（ID でも引けるが、表示と検索の元は名前）
-                    var vectorRows = await _db.VectorIndex.Where(v => v.AssetId == idText).ToListAsync(ct);
+                    // 文書索引は asset.json の ID で登録される（CollectAssetDocPoints）ので、DB の ID と asset.json の ID の両方を対象にする。
+                    // それ以外の行（別の装置・アーカイブ済み）は巻き込まない
+                    var targetIds = new List<string> { idText };
+                    if (json != null && json.Id != dbAsset.Id) targetIds.Add(json.Id.ToString());
+                    var vectorRows = await _db.VectorIndex.Where(v => v.AssetId != null && targetIds.Contains(v.AssetId)).ToListAsync(ct);
                     foreach (var v in vectorRows)
                     {
                         v.AssetName = newName;
@@ -260,6 +307,43 @@ public class AssetRenameService
             result.DbUpdated = false;
             return result;
         }
+    }
+
+    /// <summary>archive_index.json に、この名前の装置がアーカイブ済みとして載っているか。</summary>
+    private static async Task<bool> IsArchivedAsync(string indexPath, string name)
+    {
+        var index = await new ArchiveIndexReader().LoadAsync(indexPath);
+        return index.Archived.Any(e => e.Type == "asset"
+            && string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// アーカイブ（zip）の中の asset_links.json が、この名前を子装置として参照している親装置の名前。
+    /// 参照の無いアーカイブは含めない。読めない zip は飛ばす。
+    /// </summary>
+    private static List<string> FindArchivesReferencing(string archiveAssetsDir, string name)
+    {
+        var found = new List<string>();
+        if (!Directory.Exists(archiveAssetsDir)) return found;
+
+        foreach (var zip in Directory.GetFiles(archiveAssetsDir, "*.zip").OrderBy(z => z, StringComparer.Ordinal))
+        {
+            try
+            {
+                using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
+                var entry = archive.Entries.FirstOrDefault(e =>
+                    string.Equals(e.FullName, AssetLinksFileName, StringComparison.OrdinalIgnoreCase));
+                if (entry == null) continue;
+                using var reader = new StreamReader(entry.Open());
+                var (_, count) = AssetRenamePlanner.RenameChildReferences(reader.ReadToEnd(), name, name + "_");
+                if (count > 0) found.Add(Path.GetFileNameWithoutExtension(zip));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            {
+                // 壊れた zip は判定できないので飛ばす
+            }
+        }
+        return found;
     }
 
     private Task RunHookAsync(string step) => StepHook?.Invoke(step) ?? Task.CompletedTask;

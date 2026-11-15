@@ -130,15 +130,22 @@ public static class CommandHelper
         var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
         optionsBuilder.UseSqlite($"Data Source={dbPath}");
         var context = new DesignAidDbContext(optionsBuilder.Options);
-        // 未適用のマイグレーションがある場合のみ Migrate を実行する。
-        // Migrate() は毎回 __EFMigrationsLock を取得しに行くため、過去の Migrate 中の
-        // 異常終了で残留したロック行があると SqliteHistoryRepository が無限リトライし、
-        // write 系コマンドがハングする。通常運用（pending なし）では Migrate を呼ばない。
-        if (context.Database.GetPendingMigrations().Any())
-        {
-            context.Database.Migrate();
-        }
+        ApplyPendingMigrations(context);
         return context;
+    }
+
+    /// <summary>
+    /// 未適用のマイグレーションがある場合のみ Migrate を実行する。
+    /// Migrate() は毎回 __EFMigrationsLock を取得しに行くため、過去の Migrate 中の
+    /// 異常終了で残留したロック行があると SqliteHistoryRepository が無限リトライし、
+    /// write 系コマンドがハングする。通常運用（pending なし）では Migrate を呼ばない。
+    /// </summary>
+    /// <returns>Migrate を実行したら true</returns>
+    public static bool ApplyPendingMigrations(DesignAidDbContext context)
+    {
+        if (!context.Database.GetPendingMigrations().Any()) return false;
+        context.Database.Migrate();
+        return true;
     }
 
     /// <summary>

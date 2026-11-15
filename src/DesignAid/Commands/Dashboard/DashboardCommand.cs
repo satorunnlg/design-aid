@@ -77,6 +77,10 @@ public class DashboardCommand : Command
             return 1;
         }
 
+        // 旧版の DB のまま起動しても、追加された列（Assets.PreviousNames など）で検索が失敗しないよう、
+        // DB を使う前に既存の経路（保留中のマイグレーションがあるときだけ Migrate）を通す。
+        using (var ctx = CommandHelper.CreateDbContext()) { }
+
         var url = $"http://localhost:{port}";
 
         // ContentRootPath をアプリケーションのベースディレクトリに設定。

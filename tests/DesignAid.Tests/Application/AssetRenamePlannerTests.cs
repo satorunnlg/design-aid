@@ -149,6 +149,63 @@ public class AssetRenamePlannerTests
         Assert.Equal(3, AssetRenamePlanner.CheckPreconditions(f).Count);
     }
 
+    [Fact]
+    public void CheckPreconditions_旧名が不正_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldName = "a/b" });
+        Assert.Single(errors);
+        Assert.Contains("旧名が使えません", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_旧名がassetsの外_止める()
+    {
+        Assert.Single(AssetRenamePlanner.CheckPreconditions(Ok() with { OldDirOutsideAssets = true }));
+    }
+
+    [Fact]
+    public void CheckPreconditions_大小文字だけ違う名前がある_正しい名前を出して止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldCaseVariants = new[] { "Old" } });
+        Assert.Single(errors);
+        Assert.Contains("Old", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_アーカイブ済み_復元を案内して止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldArchived = true });
+        Assert.Single(errors);
+        Assert.Contains("archive restore", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_アーカイブ内の参照_親を復元するよう案内して止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { ArchivesReferencingOld = new[] { "parent" } });
+        Assert.Single(errors);
+        Assert.Contains("parent", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_空の大小文字違い一覧とアーカイブ参照一覧_進めてよい()
+    {
+        var f = Ok() with { OldCaseVariants = Array.Empty<string>(), ArchivesReferencingOld = Array.Empty<string>() };
+        Assert.Empty(AssetRenamePlanner.CheckPreconditions(f));
+    }
+
+    [Fact]
+    public void IsDirectChildOf_assets直下だけtrue()
+    {
+        var assets = Path.Combine(Path.GetTempPath(), "x-assets");
+        Assert.True(AssetRenamePlanner.IsDirectChildOf(assets, Path.Combine(assets, "old")));
+        Assert.True(AssetRenamePlanner.IsDirectChildOf(assets + Path.DirectorySeparatorChar, Path.Combine(assets, "old")));
+        Assert.False(AssetRenamePlanner.IsDirectChildOf(assets, Path.Combine(assets, "..", "other", "old")));
+        Assert.False(AssetRenamePlanner.IsDirectChildOf(assets, Path.Combine(assets, "a", "b")));
+        Assert.False(AssetRenamePlanner.IsDirectChildOf(assets, assets));
+        Assert.False(AssetRenamePlanner.IsDirectChildOf(assets, Path.Combine(Path.GetTempPath(), "elsewhere", "old")));
+    }
+
     // ---- UpdatePreviousNames ----
 
     [Fact]
