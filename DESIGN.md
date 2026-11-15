@@ -1115,6 +1115,21 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 （マイグレーション `AddAssetPreviousNames`）を足し、`sync`（asset.json → DB）と `sync --restore-json`（DB → asset.json）の
 両方向でこの欄を運ぶ。`asset update` は record の `with` で書き換えるため欄が残る。
 
+**戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
+戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
+
+**途中でプロセスが止まったとき（Ctrl+C・強制終了）:** 記録（ジャーナル）は持たない。フォルダの移動の後で止まると、
+フォルダだけ新名で、asset.json の `name` と DB は旧名のまま残りうる。復旧は、asset.json の `name` を新名に直し
+（`previous_names` に旧名を足す）、`daid sync` で DB のパスを揃える。
+
+**古い daid（0.6.1-alpha 以前）との混在:** DB の列は NULL を許す追加だけなので、古い daid が新しい DB を読んでも壊れない。
+ただし古い daid の `asset update` は `previous_names` を知らないため、asset.json からこの欄を消す。
+改名を使ったら、その DB と assets/ を扱う daid を全部更新するまで、古い daid で `asset update` しない。
+`sync`（asset.json → DB）は asset.json に欄が無ければ DB の履歴を消さない（`SyncService.ApplyAssetJson`）。
+
+**前提:** `assets/<name>/` は独立した通常の clone であること。`.git` の中に絶対パスを持つ構成
+（`git worktree add` で作った作業ツリーなど）は、移動の後に `git worktree repair` が要る。
+
 **名前・パスで結ばれているものの調査結果（2026-11-15、コードを全文検索して確認）:**
 
 | 対象 | 結び方 | 改名での扱い |

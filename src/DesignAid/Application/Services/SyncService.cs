@@ -335,8 +335,62 @@ public class SyncService : ISyncService
     };
 
     /// <summary>
+    /// asset.json の内容を DB の装置へ反映する（<c>daid sync</c> の取り込み）。
+    /// <paramref name="existing"/> が null なら新しく作って返し、あれば更新して同じものを返す。
+    /// </summary>
+    /// <remarks>
+    /// <c>previous_names</c>（改名の履歴）もここで DB へ移す。asset.json に欄が無い（null）ときは
+    /// DB の履歴を消さない（古い daid が書いた asset.json で履歴が消えるのを防ぐ）。
+    /// </remarks>
+    public static Asset ApplyAssetJson(Asset? existing, AssetJson json, string assetDir)
+    {
+        AssetStatus? status = null;
+        if (json.Status != null && TryParseAssetStatus(json.Status, out var parsed))
+        {
+            status = parsed;
+        }
+
+        if (existing == null)
+        {
+            // 新規登録
+            var created = Asset.Create(json.Name, assetDir, json.DisplayName, json.Description);
+            if (status != null) created.Update(status: status);
+            if (json.Tags != null && json.Tags.Count > 0) created.Update(tags: json.Tags);
+            if (json.PreviousNames != null && json.PreviousNames.Count > 0) created.Update(previousNames: json.PreviousNames);
+            return created;
+        }
+
+        // 既存更新（null の欄は Asset.Update が変えない）
+        existing.Update(
+            displayName: json.DisplayName,
+            description: json.Description,
+            status: status,
+            tags: json.Tags,
+            previousNames: json.PreviousNames);
+        existing.UpdatePath(assetDir);
+        return existing;
+    }
+
+    /// <summary>
+    /// asset.json の <c>status</c> 文字列を <see cref="AssetStatus"/> へ変換する。
+    /// 知らない文字列なら false（<see cref="ToJsonStatus"/> と<b>対で保つ</b>）。
+    /// </summary>
+    public static bool TryParseAssetStatus(string status, out AssetStatus result)
+    {
+        result = status.ToLowerInvariant() switch
+        {
+            "active" => AssetStatus.Active,
+            "dormant" => AssetStatus.Dormant,
+            "archived" => AssetStatus.Archived,
+            "third_party" => AssetStatus.ThirdParty,
+            _ => AssetStatus.Active
+        };
+        return status.ToLowerInvariant() is "active" or "dormant" or "archived" or "third_party";
+    }
+
+    /// <summary>
     /// <see cref="AssetStatus"/> を asset.json の <c>status</c> 文字列へ変換する。
-    /// asset.json 側のパース（<c>SyncCommand.TryParseAssetStatus</c>）と<b>対で保つ</b>。
+    /// asset.json 側のパース（<see cref="TryParseAssetStatus"/>）と<b>対で保つ</b>。
     /// </summary>
     public static string ToJsonStatus(AssetStatus status) => status switch
     {

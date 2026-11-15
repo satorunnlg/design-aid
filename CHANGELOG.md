@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 事前確認（旧名なし・新名が不正・新名が既にある・移動先が既にある・旧名と新名が同じ）に 1 つでも当てはまれば
     何も変えずに終了コード 1 で止まる。途中で失敗したら逆順に戻す
   - `--json` / `--quiet`
+  - 注意: 0.6.1-alpha 以前の daid の `asset update` は `previous_names` を消す。改名を使ったら、同じ DB と assets/ を扱う daid を全部更新する
 - `asset add` が装置名を検査するようになった（`asset rename` と同じ検査。空・パス区切り・`..`・
   Windows の禁止文字や予約名・末尾の `.` を終了コード 2 で拒否する）
 

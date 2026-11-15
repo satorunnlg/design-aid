@@ -324,41 +324,13 @@ public class SyncCommand : Command
                     var assetJson = assetJsonReader.Read(assetDir);
                     if (assetJson == null) continue;
 
-                    var dbAsset = db.Assets.FirstOrDefault(a => a.Name == assetJson.Name);
-                    if (dbAsset == null)
+                    var existing = db.Assets.FirstOrDefault(a => a.Name == assetJson.Name);
+                    // asset.json → DB の反映は SyncService.ApplyAssetJson に一本化（検査で固定している）
+                    var dbAsset = SyncService.ApplyAssetJson(existing, assetJson, assetDir);
+                    if (existing == null)
                     {
-                        // 新規登録
-                        dbAsset = Domain.Entities.Asset.Create(assetJson.Name, assetDir, assetJson.DisplayName, assetJson.Description);
-                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var status))
-                        {
-                            dbAsset.Update(status: status);
-                        }
-                        if (assetJson.Tags != null && assetJson.Tags.Count > 0)
-                        {
-                            dbAsset.Update(tags: assetJson.Tags);
-                        }
-                        if (assetJson.PreviousNames != null && assetJson.PreviousNames.Count > 0)
-                        {
-                            dbAsset.Update(previousNames: assetJson.PreviousNames);
-                        }
                         db.Assets.Add(dbAsset);
                         assetCount++;
-                    }
-                    else
-                    {
-                        // 既存更新
-                        AssetStatus? newStatus = null;
-                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var parsed))
-                        {
-                            newStatus = parsed;
-                        }
-                        dbAsset.Update(
-                            displayName: assetJson.DisplayName,
-                            description: assetJson.Description,
-                            status: newStatus,
-                            tags: assetJson.Tags,
-                            previousNames: assetJson.PreviousNames);
-                        dbAsset.UpdatePath(assetDir);
                     }
                 }
                 db.SaveChanges();
@@ -577,19 +549,6 @@ public class SyncCommand : Command
         Console.WriteLine($"       ✓ {restored} 件の asset.json を DB の内容から復元しました。");
         Console.WriteLine("       復元した asset.json は対象リポジトリで未追跡ファイルになります。");
         Console.WriteLine("       追跡するか .gitignore に入れるかを決めてください。");
-    }
-
-    private static bool TryParseAssetStatus(string status, out AssetStatus result)
-    {
-        result = status.ToLowerInvariant() switch
-        {
-            "active" => AssetStatus.Active,
-            "dormant" => AssetStatus.Dormant,
-            "archived" => AssetStatus.Archived,
-            "third_party" => AssetStatus.ThirdParty,
-            _ => AssetStatus.Active
-        };
-        return status.ToLowerInvariant() is "active" or "dormant" or "archived" or "third_party";
     }
 
     private static void SyncVectorIndex(string componentsDir, string assetsDir, PartJsonReader partJsonReader)

@@ -442,6 +442,37 @@ public class AssetRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Rename_戻しの一部が失敗したら_戻せなかった段階は変わったままと報告する()
+    {
+        await AddAssetAsync("old");
+        string? lockedJson = null;
+
+        // asset.json を書き換えた後に失敗させ、その asset.json を読み取り専用にして戻しを失敗させる
+        var r = await RenameAsync("old", "new", step =>
+        {
+            if (step != "after-json") return Task.CompletedTask;
+            lockedJson = Path.Combine(_assetsDir, "new", "asset.json");
+            File.SetAttributes(lockedJson, FileAttributes.ReadOnly);
+            throw new InvalidOperationException("注入した失敗");
+        });
+
+        try
+        {
+            Assert.False(r.Success);
+            Assert.Single(r.RollbackFailures);
+            Assert.Contains("asset.json", r.RollbackFailures[0]);
+            Assert.True(r.AssetJsonUpdated);   // 戻せなかったので変わったまま
+            Assert.False(r.FolderMoved);       // フォルダは戻せた
+            Assert.Contains("フォルダの移動", r.RolledBack);
+        }
+        finally
+        {
+            var path = Path.Combine(_assetsDir, "old", "asset.json");
+            if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
     public async Task Rename_DBの更新が実際に失敗したら_フォルダとJSONと参照が元に戻る()
     {
         await AddAssetAsync("old");

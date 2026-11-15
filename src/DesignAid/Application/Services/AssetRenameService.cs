@@ -96,7 +96,8 @@ public class AssetRenameService
         result.PreviousNames = previousNames;
 
         // ---- 2. 実行（失敗したら逆順に戻す）----
-        var undo = new List<(string Description, Func<Task> Action)>();
+        // Reset は、戻しに成功したときだけ結果のフラグを戻す（戻せなかった段階は「変わったまま」と報告する）
+        var undo = new List<(string Description, Func<Task> Action, Action Reset)>();
         try
         {
             // 2-1. フォルダ移動（git の作業ツリーと .git ごと）
@@ -118,7 +119,7 @@ public class AssetRenameService
                 {
                     Directory.Move(newDir, oldDir);
                     return Task.CompletedTask;
-                }));
+                }, () => result.FolderMoved = false));
                 await RunHookAsync("after-move");
             }
 
@@ -134,7 +135,8 @@ public class AssetRenameService
                                   ?? json.DisplayName,
                     PreviousNames = previousNames
                 };
-                undo.Add(("asset.json の書き換え", () => File.WriteAllBytesAsync(jsonPath, original, CancellationToken.None)));
+                undo.Add(("asset.json の書き換え", () => File.WriteAllBytesAsync(jsonPath, original, CancellationToken.None),
+                    () => result.AssetJsonUpdated = false));
                 await _jsonReader.WriteAsync(newDir, updated, ct);
                 result.AssetJsonUpdated = true;
                 result.DisplayName = updated.DisplayName;
@@ -173,10 +175,12 @@ public class AssetRenameService
                         continue;
                     }
 
-                    undo.Add(($"{Path.GetFileName(dir)}/{AssetLinksFileName} の書き換え",
-                        () => File.WriteAllBytesAsync(linksPath, originalBytes, CancellationToken.None)));
+                    var linkLabel = $"{Path.GetFileName(dir)}/{AssetLinksFileName}";
+                    undo.Add(($"{linkLabel} の書き換え",
+                        () => File.WriteAllBytesAsync(linksPath, originalBytes, CancellationToken.None),
+                        () => result.LinkFilesUpdated.Remove(linkLabel)));
                     await File.WriteAllTextAsync(linksPath, newText, ct);
-                    result.LinkFilesUpdated.Add($"{Path.GetFileName(dir)}/{AssetLinksFileName}");
+                    result.LinkFilesUpdated.Add(linkLabel);
                 }
             }
             await RunHookAsync("after-links");
@@ -243,6 +247,7 @@ public class AssetRenameService
                 try
                 {
                     await undo[i].Action();
+                    undo[i].Reset();
                     result.RolledBack.Add(undo[i].Description);
                 }
                 catch (Exception undoEx)
@@ -251,10 +256,8 @@ public class AssetRenameService
                 }
             }
 
-            result.FolderMoved = false;
-            result.AssetJsonUpdated = false;
+            // DB はトランザクションで、コミット（DbUpdated = true）の後に失敗する処理は無い
             result.DbUpdated = false;
-            result.LinkFilesUpdated.Clear();
             return result;
         }
     }
