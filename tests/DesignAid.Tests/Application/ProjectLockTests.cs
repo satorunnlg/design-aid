@@ -456,6 +456,8 @@ public class ProjectLockTests : IDisposable
     [Fact]
     public async Task 改名の途中のキャッシュ削除に失敗したら_結果の警告に出す()
     {
+        // 開いているファイルを消せないのは Windows の挙動。他の OS では削除が成功するので、失敗を作れない
+        if (!OperatingSystem.IsWindows()) return;
         await AddAssetAsync("old");
         var idOld = (await NewDb().Assets.AsNoTracking().FirstAsync()).Id;
         using (var db = NewDb())

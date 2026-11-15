@@ -1306,7 +1306,9 @@ public class AssetRenameServiceTests : IDisposable
         Assert.False(tooLong.Success);
         Assert.Equal(files, SnapshotFiles());
 
-        // 旧名が 255 バイトを超えていても（既存の長い名前）、改名できる
+        // 旧名が 255 バイトを超えていても（既存の長い名前）、改名できる。
+        // Linux・macOS のファイルシステムは名前が 255 バイトまでなので、そもそもそのフォルダを作れない（Windows だけで確かめる）
+        if (!OperatingSystem.IsWindows()) return;
         var longOld = new string('漢', 86);
         await AddAssetAsync(longOld);
         var r = await RenameAsync(longOld, "short");
