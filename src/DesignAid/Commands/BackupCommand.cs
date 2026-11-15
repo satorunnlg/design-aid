@@ -12,6 +12,12 @@ namespace DesignAid.Commands;
 /// </summary>
 public class BackupCommand : Command
 {
+    /// <summary>
+    /// S3 へのアップロード（ローカルの ZIP のパス, S3 の URI, AWS プロファイル → 終了コード）。
+    /// 既定は AWS CLI。検査では、アップロードの時点でロックが解放済みであることを確かめるために差し替える。
+    /// </summary>
+    public Func<string, string, string, Task<int>> Uploader { get; set; } = UploadToS3Async;
+
     public BackupCommand() : base("backup", "データディレクトリをバックアップする（DB dump含む）")
     {
         var dataPathOption = new Option<string?>(
@@ -221,7 +227,7 @@ public class BackupCommand : Command
                 }
 
                 // AWS CLI を使用してアップロード
-                var result = await UploadToS3Async(zipFilePath, s3Uri, awsProfile ?? "default");
+                var result = await Uploader(zipFilePath, s3Uri, awsProfile ?? "default");
 
                 // 一時ファイルを削除
                 if (File.Exists(zipFilePath) && output == null)

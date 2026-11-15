@@ -19,7 +19,7 @@ public class AssetBomCommand : Command
         this.Add(new Option<string?>("--export", "エクスポート形式 (csv)"));
         this.Add(new Option<bool>("--include-subassets", "子装置のパーツも含める"));
 
-        this.Handler = CommandHandler.Create<string, bool, string?, bool>(ExecuteAsync);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string, bool, string?, bool>(ExecuteAsync));
     }
 
     private static readonly JsonSerializerOptions JsonReadOptions = new()

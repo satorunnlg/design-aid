@@ -269,6 +269,29 @@ public class AssetRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Rename_部品の行の装置名を書き換えたら_UpdatedAtを進める_検索のキャッシュの古さの判定が検知できる()
+    {
+        var id = await AddAssetAsync("old");
+        var seeded = DateTime.UtcNow.AddDays(-1);
+        using (var db = NewDb())
+        {
+            var row = VecRow(id, "old", "spec");
+            row.UpdatedAt = seeded;
+            db.VectorIndex.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success);
+        using var check = NewDb();
+        var after = await check.VectorIndex.AsNoTracking().SingleAsync();
+        Assert.Equal("new", after.AssetName);
+        Assert.True(after.UpdatedAt.ToUniversalTime() > seeded.AddMinutes(1), // 保存の変換で Kind が Local になるので UTC にそろえて比べる
+             $"行の中身を書き換えたのに UpdatedAt が進んでいない（検索のキャッシュが古いまま使われる）after={after.UpdatedAt:o} seeded={seeded:o} rows={r.VectorRowsUpdated} warn={string.Join(";", r.Warnings)}");
+    }
+
+    [Fact]
     public async Task Rename_DBだけにある装置_フォルダを移しDBを更新しasset_jsonは作らず警告する()
     {
         var id = await AddAssetAsync("old", withJson: false);

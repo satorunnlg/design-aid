@@ -17,7 +17,7 @@ public class AssetListCommand : Command
         this.Add(new Option<string?>("--status", "ステータスでフィルタ (active/dormant/archived/third_party)"));
         this.Add(new Option<string?>("--tag", "タグでフィルタ"));
 
-        this.Handler = CommandHandler.Create<bool, bool, string?, string?>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool, bool, string?, string?>(Execute));
     }
 
     private static void Execute(bool json, bool verbose, string? status, string? tag)

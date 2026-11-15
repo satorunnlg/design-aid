@@ -19,7 +19,7 @@ public class StatusCommand : Command
         this.Add(new Option<string?>("--asset", "特定装置を表示"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
-        this.Handler = CommandHandler.Create<string?, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string?, bool>(Execute));
     }
 
     private static void Execute(string? asset, bool json)

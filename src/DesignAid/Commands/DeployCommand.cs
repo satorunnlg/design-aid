@@ -18,7 +18,7 @@ public class DeployCommand : Command
         this.Add(new Option<bool>("--no-confirm", "確認なしで実行"));
         this.Add(new Option<bool>("--dry-run", "実行せずにプレビューのみ"));
 
-        this.Handler = CommandHandler.Create<string?, string?, bool, bool, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string?, string?, bool, bool, bool>(Execute));
     }
 
     private static void Execute(string? part, string? output, bool json, bool noConfirm, bool dryRun)

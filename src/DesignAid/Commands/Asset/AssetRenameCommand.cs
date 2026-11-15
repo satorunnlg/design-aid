@@ -18,7 +18,7 @@ public class AssetRenameCommand : Command
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>(new[] { "--quiet", "-q" }, "成功時の出力を省く（エラー・警告は stderr に出る）"));
 
-        this.Handler = CommandHandler.Create<string, string, bool, bool>(ExecuteAsync);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string, string, bool, bool>(ExecuteAsync));
     }
 
     private static readonly JsonSerializerOptions JsonOut = new() { WriteIndented = true };

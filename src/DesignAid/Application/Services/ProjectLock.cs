@@ -12,7 +12,8 @@ namespace DesignAid.Application.Services;
 /// </para>
 /// <para>
 /// 同じ呼び出しの流れ（AsyncLocal）の中で既に持っているときは、二重に取りにいかず、何もしないハンドルを返す
-/// （外側の処理がロックを持ったまま内側の処理を呼んでも、自分自身とぶつからない）。
+/// （外側の処理がロックを持ったまま内側の処理を呼んでも、自分自身とぶつからない）。再入の判定のキーとロックファイルの場所には、
+/// junction・symlink を解決した実体のパスを使う（リンク経由で指した同じ場所を、同じ場所と見なす）。
 /// </para>
 /// </summary>
 public static class ProjectLock
@@ -29,7 +30,7 @@ public static class ProjectLock
     /// <param name="dataDir">プロジェクトのルート（design_aid.db があるディレクトリ）</param>
     public static Handle? TryAcquire(string dataDir)
     {
-        var key = Normalize(dataDir);
+        var key = ResolveKey(dataDir);
 
         // 同じ流れで既に持っている（再入）。パスは正規化して比べ、Windows では大文字小文字を区別しない
         if (Held.Value != null && string.Equals(Held.Value, key, KeyComparison))
@@ -67,10 +68,52 @@ public static class ProjectLock
     private static StringComparison KeyComparison
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-    /// <summary>再入の判定に使うキー: フルパスにし、区切り文字をそろえ、末尾の区切りを除く。</summary>
-    private static string Normalize(string dataDir)
-        => Path.GetFullPath(dataDir).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
-            .TrimEnd(Path.DirectorySeparatorChar);
+    /// <summary>
+    /// 再入の判定に使うキー（<b>ロックファイルを置く場所</b>でもある）: フルパスにし、区切り文字をそろえ、末尾の区切りを除き、
+    /// <b>junction・symlink を解決した実体のパス</b>にする。リンク経由で指した同じ場所が、別の場所と見なされて
+    /// 自分自身のロックに誤って止められるのを防ぐ。リンクを解決できなければ（権限・ループなど）解決前のパスのまま
+    /// （誤って止まる側に倒れる）。
+    /// </summary>
+    public static string ResolveKey(string dataDir)
+        => ResolveLinks(Path.GetFullPath(dataDir).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+            .TrimEnd(Path.DirectorySeparatorChar), 0);
+
+    /// <summary>リンクを辿る回数の上限（循環リンクで止まらなくなるのを防ぐ）。</summary>
+    private const int MaxLinkDepth = 16;
+
+    /// <summary>
+    /// パスの各階層を根から順に見て、リンク（junction・symlink）であれば実体に置き換える。
+    /// 最後の階層だけでなく、途中の階層がリンクでも解決する（<c>Directory.ResolveLinkTarget</c> は渡した階層しか見ないため）。
+    /// </summary>
+    private static string ResolveLinks(string fullPath, int depth)
+    {
+        if (depth > MaxLinkDepth) return fullPath;
+        try
+        {
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrEmpty(root)) return fullPath;
+            var current = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var parts = fullPath[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                current = Path.Combine(current, part);
+                FileSystemInfo? target = null;
+                try { target = new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true); }
+                catch (IOException) { /* 無い階層・リンクでない・ループ: そのまま */ }
+                catch (UnauthorizedAccessException) { }
+                if (target != null)
+                {
+                    // 実体のパスの途中にも別のリンクがありうるので、再帰して解決する
+                    current = ResolveLinks(target.FullName.TrimEnd(Path.DirectorySeparatorChar), depth + 1);
+                }
+            }
+            return current.Length > root.Length ? current.TrimEnd(Path.DirectorySeparatorChar) : current;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return fullPath;
+        }
+    }
 
     /// <summary>
     /// 例外が「別の誰かがロックファイルを持っている」ことを表すか。

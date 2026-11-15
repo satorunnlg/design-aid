@@ -14,7 +14,7 @@ public class ArchiveListCommand : Command
     {
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
-        this.Handler = CommandHandler.Create<bool>(ExecuteAsync);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool>(ExecuteAsync));
     }
 
     private static async Task ExecuteAsync(bool json)

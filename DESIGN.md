@@ -1125,20 +1125,24 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 **取れなければ待たずに止める**（待つ形は、以前のロック待ちのハングの原因になるので入れない）。ハンドルで持つので、
 プロセスが落ちてもロックは残らない。同じ呼び出しの流れ（AsyncLocal）で既に持っているときは二重に取らず、何もしない
 ハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない。再入の判定のキーはパスを正規化し、Windows では大文字小文字を
-区別しない）。「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は
+区別せず、**junction・symlink は解決した実体のパスにする**。パスの各階層を根から順に `DirectoryInfo.ResolveLinkTarget` で
+見るので、最後の階層だけでなく途中の階層がリンクでも解決する。ロックファイルもキーの場所に置くので、リンク経由でも実体と
+同じファイルを開く。リンクを解決できなければ（権限・循環など）解決前のパスのまま使う）。「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は
 EWOULDBLOCK の errno = 11 / 35）。権限のエラー（`UnauthorizedAccessException`）や、場所が無い・容量不足などの IO エラーは
-busy にせず、元の原因のまま返す。`--json` のコマンド（`sync`・`deploy`・`asset rename`）は、取れないとき標準出力に失敗の
-JSON を 1 つだけ出す。
+busy にせず、元の原因のまま返す。`--json` のコマンドは、取れないとき標準出力に失敗の JSON を 1 つだけ出す
+（下の「`--json` の失敗の契約」）。
 
 **既知の限界:**
-- 再入の判定のキーはパスの正規化（フルパス・区切り文字・末尾の区切り、Windows は大文字小文字を無視）までで、
-  junction・symlink・8.3 短縮名・macOS の大文字小文字を区別しないボリュームなど、**同じ場所を別の表記で指す場合は
+- 再入の判定のキーはパスの正規化（フルパス・区切り文字・末尾の区切り、Windows は大文字小文字を無視）と、
+  junction・symlink の解決までで、8.3 短縮名・macOS の大文字小文字を区別しないボリュームなど、**同じ場所を別の表記で指す場合は
   同じキーにならない**。そのとき再入が見分けられず、内側の取得が「別の変更が実行中」で止まる（誤って止まるだけで、
   排他が破れる方向の誤りではない）。macOS は既定のボリュームが大文字小文字を区別しないが、キーは Unix として
-  大文字小文字を区別して比べる（同じ理由で、誤って止まる側）。
+  大文字小文字を区別して比べる（同じ理由で、誤って止まる側）。リンクの解決に失敗したとき（権限・循環）も同じ側に倒れる。
 - 旧版の daid（判定値を `hnsw_index.bin.stamp` に別ファイルで持つ形）と新しい daid を同じプロジェクトで混ぜて使うと、
-  新しい daid が書いた bin を、旧版が残した `.stamp` と取り違えて読む隙がある（新しい daid は bin のヘッダーだけを見て
-  `.stamp` を消すが、旧版は逆に bin 本体をそのまま読む）。同じプロジェクトでは daid の版をそろえる。
+  旧版が新しい形式の bin（先頭にヘッダーがある）を読んで、キャッシュが一度作り直しになりうる。新しい daid は、**新しい形式の bin を書く前に旧形式の
+  `.stamp` を消し、消せなければ（開かれているなど）bin を書かない**（警告を出し、次の検索で作り直す）ので、旧版が残った `.stamp` と
+  新しい bin を取り違えて読むことはない。ただし旧版は bin 本体をヘッダーなしで読むので、混ぜて使うと検索のたびに作り直しになる。
+  同じプロジェクトでは daid の版をそろえる。
 - Unix では、ロックを保持している間にロックファイルを手で消す（または別のファイルに差し替える）と、次に取る処理が
   別の inode を開いてしまい、**排他が破れる**。ロックファイルは消さない・置き換えない。
 
@@ -1164,8 +1168,12 @@ AppendAll`・`new StreamWriter`・`new FileStream`・`Directory.Delete/Move/Crea
 **今読んだ行から作った判定値**と照らして、違えば・ヘッダーが無ければ（旧形式）・読めなければ（別のプロセスが書いている
 最中など）使わず、例外にせず作り直す（判定値は行を読んだのと同じ結果から作るので、間に更新が入っても
 ずれない）。行の読み込みは `AsNoTracking` にする（長く生きる DbContext が追跡中の古い行を返すと、判定値が古いままになる）。
-`UpdatedAt` の列は既にあるので、マイグレーションは増やしていない。限界: 行の中身を `UpdatedAt` を進めずに書き換える処理は
-検知できない（従来からある限界）。
+`UpdatedAt` の列は既にあるので、マイグレーションは増やしていない。**行の中身を書き換える箇所は、すべて `UpdatedAt` を進める**
+（`VectorSearchService` の `UpsertPartAsync` / `UpsertPartsAsync`、改名の `AssetRenameService` の装置名の更新。行を消す処理は件数・Id の判定値で
+検知される）。進め忘れは静的な検査（`VectorIndexWriteCoverageTests`）が捕まえる: VectorIndex を扱うメンバーのうち、
+既存の行のプロパティへの代入（`x.AssetName = ...`）か SQL での直接の書き換え（`ExecuteUpdate`・`ExecuteSql` など）を含むものが、
+`x.UpdatedAt = DateTime.UtcNow` も含むことを要求する。SQL で直接書き換える処理は EF の変更追跡を通らず自動では進まないので、
+足すなら `UpdatedAt` も同じ文で進める。
 
 **戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
 戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
@@ -1229,8 +1237,19 @@ OS の `GetInvalidFileNameChars` は OS ごとに違うので、Windows の禁�
 `Environment.ExitCode` に入れた値を拾わず、**常に 0 を返す**（実測: DB の無い場所での `asset list`（exit 3 のはず）や
 既存の `asset add` の「既に存在」（exit 1 のはず）も 0 になる）。`asset rename` は仕様どおり失敗を終了コード 1 にするため、
 ハンドラを `Task<int>` にして**戻り値で返す**。`asset add` の名前の検査（終了コード 2）も同じ形で返す。
-他のコマンドは変えていない（`Program.Main` で `Environment.ExitCode` も返すようにすれば全体が直るが、
-既存のスクリプトの挙動が変わるため別の変更として扱う）。
+**#8 で全体を直した:** `Program.Main` は `Program.RunAsync` を呼び、`ResolveExitCode(InvokeAsync の戻り値, Environment.ExitCode)`
+（戻り値が 0 のときだけ `Environment.ExitCode` を採る純関数）を返す。`Environment.ExitCode` を設定するだけのハンドラの失敗も、
+終了コードに届く。**挙動の変更:** これまで失敗しても 0 だったコマンドが 0 以外を返す（`asset list` などでプロジェクトが無いときは 3、
+`check` で整合性エラーがあれば 5 など）。スクリプトが 0 を前提にしていれば直す。`CommandFailureContractTests` が、
+`Program.BuildRootCommand()` から全コマンドを列挙し、プロジェクトの無い場所で（`setup`・`update`・`mcp`・`dashboard`・`restore` を除いて）
+すべて終了コード 3 で失敗することを確かめる（コマンドを足すと自動で対象になる）。
+
+**`--json` の失敗の契約（`JsonGuard`、#10）:** `--json` を持つコマンドは、失敗しても**標準出力が有効な JSON 1 つ**になり、診断（人が読む文）は標準エラーに出る。
+各コマンドは `Handler = JsonGuard.Wrap(this, CommandHandler.Create<...>(Execute))` で包む。包んだハンドラは標準出力を一度バッファへ受け、
+終わってから判定する（純関数 `JsonGuard.ResolveStdout`）: 成功ならコマンドの出力のまま。例外で終わったときは、途中の出力を捨てて失敗の JSON
+`{ "success": false, "errors": [...], "exitCode": N }` を出す（診断は標準エラーに `[ERROR]` で出す）。0 以外の終了コードで、コマンド自身が
+有効な JSON を 1 つ出していればそれを尊重し（`asset rename` の失敗の JSON など）、出していなければ標準エラーの行を `errors` にして失敗の JSON を出す。
+`--json` を足したコマンドは、`Wrap` を通さないと `CommandFailureContractTests` が落ちる（葉のコマンドのハンドラの型で固定している）。
 
 **検査の方針:** 判定は純関数の単体テスト（`AssetRenamePlannerTests`）、実行と戻しは一時ディレクトリの実ファイル＋実 SQLite の
 テスト（`AssetRenameServiceTests`）で固める。戻しは「各段階（フォルダ・JSON・参照・DB 保存後）で例外を注入」と

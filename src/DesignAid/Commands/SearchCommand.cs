@@ -22,7 +22,7 @@ public class SearchCommand : Command
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
         this.Add(new Option<bool>("--local", "ローカル検索のみ使用（ベクトル検索を使用しない）"));
 
-        this.Handler = CommandHandler.Create<string, double, int, bool, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string, double, int, bool, bool>(Execute));
     }
 
     private static async Task Execute(string query, double threshold, int top, bool json, bool local)

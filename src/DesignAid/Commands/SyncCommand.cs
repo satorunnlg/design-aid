@@ -28,7 +28,7 @@ public class SyncCommand : Command
         this.Add(new Option<bool>("--skip-db", "DB同期をスキップ"));
         this.Add(new Option<bool>("--restore-json", "DB に行があるのに asset.json が無い装置を、DB の内容から復元する"));
 
-        this.Handler = CommandHandler.Create<bool, bool, bool, bool, bool, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool, bool, bool, bool, bool, bool>(Execute));
     }
 
     private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb, bool restoreJson)

@@ -501,6 +501,15 @@ public class VectorSearchService : IDisposable
 
             DeleteStaleTempFiles();
 
+            // 新しい形式の bin を書く<b>前に</b>、旧形式の判定値ファイル（.stamp）を消す。旧版の daid が、
+            // 残った .stamp と、新しい形式の bin（先頭にヘッダーがある）を組み合わせて、壊れた bin を読まないようにするため。
+            // 消せなければ（開かれているなど）、bin は書かない（次回の検索で作り直す）
+            if (!TryRemoveLegacyStamp(LegacyStampFilePath, out var stampError))
+            {
+                Console.Error.WriteLine($"[WARN] 旧形式の判定値ファイル（{LegacyStampFilePath}）を消せないため、検索のキャッシュを書きません（次回の検索で作り直します）: {stampError}");
+                return;
+            }
+
             // 判定値をヘッダーに入れて 1 つのファイルにし、一時の名前で書いてから置き換える（原子的）。
             // 読む側は、途中まで書かれたファイルや、判定値だけ新しいファイルを見ない
             var tmp = _hnswIndexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -540,6 +549,26 @@ public class VectorSearchService : IDisposable
         catch
         {
             // シリアライズ失敗は致命的ではない（次回再構築する）
+        }
+    }
+
+    /// <summary>
+    /// 旧形式の判定値ファイル（.stamp）を消す。無ければ成功。消せなかった（開かれている・権限がない）ときは false を返す。
+    /// </summary>
+    public static bool TryRemoveLegacyStamp(string stampPath, out string? error)
+    {
+        error = null;
+        try
+        {
+            if (File.Exists(stampPath)) File.Delete(stampPath);
+            if (!File.Exists(stampPath)) return true;
+            error = "削除したのに残っています";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
         }
     }
 

@@ -340,6 +340,7 @@ public class AssetRenameService
                     foreach (var v in vectorRows.Where(v => v.Type != "asset_doc"))
                     {
                         v.AssetName = newName;
+                        v.UpdatedAt = DateTime.UtcNow; // 検索のキャッシュの古さの判定（最後の更新時刻）が、この書き換えを検知できるようにする
                     }
                     result.VectorRowsUpdated = vectorRows.Count;
 

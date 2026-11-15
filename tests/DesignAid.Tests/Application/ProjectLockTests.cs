@@ -519,6 +519,43 @@ public class ProjectLockTests : IDisposable
     }
 
     [Fact]
+    public void 検索キャッシュ_旧stampを消す_無ければ成功_あれば消えて成功()
+    {
+        var stamp = Path.Combine(_root, "x.bin.stamp");
+        Assert.True(VectorSearchService.TryRemoveLegacyStamp(stamp, out var e0));
+        Assert.Null(e0);
+        File.WriteAllText(stamp, "1|1|1|1");
+        Assert.True(VectorSearchService.TryRemoveLegacyStamp(stamp, out _));
+        Assert.False(File.Exists(stamp));
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_旧stampを消せなければ_新しい形式のbinを書かない_消せたら書く()
+    {
+        // 開いているファイルを消せないのは Windows の挙動。他の OS では削除が成功するので、失敗を作れない
+        if (!OperatingSystem.IsWindows()) return;
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        using (vs) using (db)
+        {
+            File.Delete(cache);
+            var stamp = cache + ".stamp";
+            await File.WriteAllTextAsync(stamp, "2|2|3|1");
+
+            using (new FileStream(stamp, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) // 開かれていて消せない
+            {
+                await vs.RebuildIndexAsync();
+                // 旧版の daid が、残った .stamp と新しい形式の bin を組み合わせて壊れた bin を読まないよう、bin を書かない
+                Assert.False(File.Exists(cache), "旧 .stamp を消せないのに、新しい形式の bin を書いた");
+            }
+
+            await vs.RebuildIndexAsync();
+            Assert.True(File.Exists(cache));
+            Assert.False(File.Exists(stamp));
+            Assert.StartsWith("DAIDHNSW1|", ReadCacheHeader(cache));
+        }
+    }
+
+    [Fact]
     public async Task 検索キャッシュ_別のプロセスがキャッシュを開いたまま排他していても_検索は落ちない()
     {
         var (vs, db, cache, _) = await SetUpIndexedAsync();

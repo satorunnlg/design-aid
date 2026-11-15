@@ -225,6 +225,10 @@ public static class CommandHelper
         var dataDir = GetDataDirectory()!;
         var dbPath = GetDatabasePath();
 
+        // 旧版の DB のまま使っても、追加された列で失敗しないよう、ファクトリを登録する前に
+        // 既存の経路（保留中のマイグレーションがあるときだけ Migrate）を通す（Dashboard・MCP と同じ）
+        using (var ctx = CreateDbContext()) { }
+
         var services = new ServiceCollection();
         services.AddDesignAidServices(dbPath, dataDir);
         return services.BuildServiceProvider();

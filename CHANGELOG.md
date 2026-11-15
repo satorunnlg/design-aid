@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **終了コードの変更（#8）:** `Environment.ExitCode` を設定するだけのハンドラが、失敗しても終了コード 0 を返していたのを直した。
+  `Program.Main` が `InvokeAsync` の戻り値が 0 のとき `Environment.ExitCode` を返す。**これまで 0 だった失敗が 0 以外になる**
+  （プロジェクトが無い場所の `asset list` などは 3、`check` の整合性エラーは 5 など）。終了コードが 0 であることを前提にしたスクリプトは直す
+- `--json` のコマンドは、初期化の失敗や例外でも標準出力が有効な JSON 1 つになる（`{ "success": false, "errors": [...], "exitCode": N }`、
+  診断は標準エラー）。以前は標準出力が空になることがあった（#10）
+- `asset rename` が、壊れた zip（検査できないアーカイブ）で止まるとき、エラーに zip のパスと直し方（その zip を退避する、または
+  `daid archive restore asset <名前>` で戻す）を出す。止める判定は変えていない（#10）
+
+### Fixed
+
+- `asset rename` が部品の索引行の装置名を書き換えるとき `UpdatedAt` を進めていなかったため、検索のキャッシュの古さの判定が検知できなかった。
+  VectorIndex の行を書き換える箇所がすべて `UpdatedAt` を進めることを、静的な検査で固定した（#10）
+- プロジェクトのロックの再入の判定で、junction・symlink 経由の同じ場所を別の場所と見なして自分自身のロックに止められていたのを、
+  リンクを解決した実体のパスで判定するように直した（#10）
+- 検索のキャッシュを新しい形式で書く前に旧形式の `.stamp` を消し、消せなければ書かない（旧版の daid が壊れた bin を読む隙をなくした）（#10）
+- `CommandHelper.BuildServiceProvider` も、ファクトリを登録する前に保留中のマイグレーションの経路を通すようにした（ダッシュボード・MCP と同じ）（#10）
+
+### Added
+
+- `BackupCommand.Uploader`（S3 へのアップロードの差し替え口）。backup がアップロードの前にロックを解放することの検査のため（#10）
+
 ## [0.6.2-alpha] - 2026-11-15
 
 ### Added

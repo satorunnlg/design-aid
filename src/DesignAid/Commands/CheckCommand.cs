@@ -19,7 +19,7 @@ public class CheckCommand : Command
         this.Add(new Option<bool>("--verbose", "詳細出力"));
         this.Add(new Option<bool>("--duplicates", "パーツの重複・不整合を検出"));
 
-        this.Handler = CommandHandler.Create<string?, bool, bool, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string?, bool, bool, bool>(Execute));
     }
 
     private static void Execute(string? path, bool json, bool verbose, bool duplicates)
