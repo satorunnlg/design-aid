@@ -134,10 +134,13 @@ public class ProjectLockLinkTests : IDisposable
     [Fact]
     public void ResolveKey_存在しない場所_リンクでない場所は_例外にせずそのパスを返す()
     {
+        // 一時フォルダ自体がリンクの下にある OS がある（macOS の /var は /private/var へのリンク）。
+        // そのため、期待値は「土台の実体のパス」を基準に組み立てる
+        var baseKey = ProjectLock.ResolveKey(_base);
         var missing = Path.Combine(_base, "no", "such", "dir");
-        Assert.Equal(Path.GetFullPath(missing), ProjectLock.ResolveKey(missing));
+        Assert.Equal(Path.Combine(baseKey, "no", "such", "dir"), ProjectLock.ResolveKey(missing));
         var real = MakeReal("plain");
-        Assert.Equal(Path.GetFullPath(real), ProjectLock.ResolveKey(real));
+        Assert.Equal(Path.Combine(baseKey, "plain"), ProjectLock.ResolveKey(real));
     }
 
     [Fact]
