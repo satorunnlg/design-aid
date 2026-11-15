@@ -1115,6 +1115,10 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 （マイグレーション `AddAssetPreviousNames`）を足し、`sync`（asset.json → DB）と `sync --restore-json`（DB → asset.json）の
 両方向でこの欄を運ぶ。`asset update` は record の `with` で書き換えるため欄が残る。
 
+**同時の実行の排他:** 改名の間は、design_aid.db と同じディレクトリの `.daid-rename.lock` を排他で開いて持ち、
+取れなければ待たずに止める。**既知の制約:** `asset link` / `asset unlink` / `part link` など、`asset_links.json` を書く
+ほかの経路はこのロックを取らないので、それらと改名を同時に走らせると、片方の書き込みが失われうる。同時に実行しない。
+
 **戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
 戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
 

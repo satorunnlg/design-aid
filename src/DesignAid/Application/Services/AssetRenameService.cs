@@ -57,7 +57,9 @@ public class AssetRenameService
             lockStream = new FileStream(Path.Combine(dataDir, LockFileName), FileMode.OpenOrCreate,
                 FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
         }
-        catch (IOException)
+        // 場所が無い等の IOException の派生は「実行中」ではないので、そのまま上へ出す（原因を取り違えて案内しない）
+        catch (IOException ex) when (ex is not (DirectoryNotFoundException or FileNotFoundException
+                                                 or PathTooLongException or DriveNotFoundException))
         {
             var busy = new AssetRenameResult { OldName = oldName, NewName = newName };
             busy.Errors.AddRange(AssetRenamePlanner.CheckPreconditions(BusyFacts(oldName, newName)));
