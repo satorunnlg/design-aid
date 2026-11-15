@@ -263,4 +263,53 @@ public partial class JsonStdoutContractTests : IDisposable
         Assert.Equal(expectJson, JsonGuard.IsSingleJson(so));
         Assert.False(string.IsNullOrWhiteSpace(se) && !expectJson, "診断が出ていない");
     }
+
+    [Fact]
+    public async Task json付きの全コマンド_ヘルプの要求は_ヘルプを出して0で終わる_JSONにしない()
+    {
+        var emptyDir = Path.Combine(_base, "help-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(emptyDir);
+        Environment.SetEnvironmentVariable("DA_DATA_DIR", "");
+        Directory.SetCurrentDirectory(emptyDir);
+        var bad = new List<string>();
+        var leaves = Leaves(Program.BuildRootCommand(), Array.Empty<string>()).Where(l => l.Cmd.Options.Any(o => o.HasAlias("--json"))).ToList();
+        Assert.True(leaves.Count >= 12);
+        foreach (var (key, _) in leaves)
+            foreach (var help in new[] { "--help", "-h", "-?" })
+            {
+                var args = key.Split(' ').Append("--json").Append(help).ToArray();
+                var (code, so, se) = await RunAsync(args);
+                if (code != 0 || JsonGuard.IsSingleJson(so) || !so.Contains("Usage:", StringComparison.OrdinalIgnoreCase))
+                    bad.Add(Describe(args, code, so, se));
+            }
+        Assert.True(bad.Count == 0, "ヘルプにならないコマンド:" + Environment.NewLine + string.Join(Environment.NewLine, bad));
+    }
+
+    [Theory]
+    [InlineData("asset", "rename", "--json", "--help")]   // 必須の引数が足りない
+    [InlineData("search", "--json", "-h")]
+    [InlineData("asset", "bom", "-?", "--json")]
+    [InlineData("asset", "rename", "--json", "--bogus", "--help")] // 未知のオプションと併用してもヘルプ
+    public async Task 必須の引数が足りなくても_ヘルプの要求ならヘルプを出して0で終わる(params string[] args)
+    {
+        var (code, so, se) = await RunAsync(args);
+        Assert.True(code == 0 && !JsonGuard.IsSingleJson(so) && so.Contains("Usage:", StringComparison.OrdinalIgnoreCase), Describe(args, code, so, se));
+    }
+
+    [Fact]
+    public async Task archive_restore_asset_ハイフン2つの後ろの名前は_オプションと取り違えず名前の引数に届く()
+    {
+        await CreateHealthyProjectAsync();
+        foreach (var name in new[] { "--help", "-h", "--json" })
+        {
+            var args = new[] { "archive", "restore", "asset", "--", name };
+            var (code, so, se) = await RunAsync(args);
+            // ヘルプにならず（Usage が出ない）、名前として扱われて「見つからない」で失敗する（名前が診断に出る）
+            Assert.True(code != 0 && !so.Contains("Usage:", StringComparison.OrdinalIgnoreCase) && se.Contains(name), Describe(args, code, so, se));
+        }
+        // -- 無しでは、--help はヘルプになる（案内に -- が要る理由）
+        var (c2, so2, _) = await RunAsync("archive", "restore", "asset", "--help");
+        Assert.True(c2 == 0 && so2.Contains("Usage:", StringComparison.OrdinalIgnoreCase));
+    }
+
 }

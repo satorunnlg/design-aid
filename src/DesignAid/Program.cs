@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
 using System.Text;
 using DesignAid.Commands;
 using DesignAid.Commands.Archive;
@@ -30,7 +32,9 @@ public class Program
 
         // 引数の解析に失敗したときは、ハンドラに届かない（JsonGuard が働かない）ので、ここで契約を守る（#10）:
         // --json があるなら、標準出力は失敗の JSON 1 つだけにし、診断は標準エラーへ
-        var parseResult = rootCommand.Parse(args);
+        // 判定と実行は、同じパーサー（既定のヘルプ・バージョン等のオプション付き）の同じ解析の結果を使う
+        var parser = new CommandLineBuilder(rootCommand).UseDefaults().Build();
+        var parseResult = parser.Parse(args);
         var parseErrors = parseResult.Errors.Select(e => e.Message).ToList();
         if (parseErrors.Count > 0 && WantsJson(parseResult, args))
         {
@@ -41,7 +45,7 @@ public class Program
             return ParseFailureExitCode;
         }
 
-        return ResolveExitCode(await rootCommand.InvokeAsync(args), Environment.ExitCode);
+        return ResolveExitCode(await parseResult.InvokeAsync(), Environment.ExitCode);
     }
 
     /// <summary>引数の解析に失敗したときの終了コード（System.CommandLine の既定と同じ）。</summary>

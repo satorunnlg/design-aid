@@ -544,7 +544,7 @@ public class AssetRenamePlannerTests
         var zip = Path.Combine(Path.GetTempPath(), "arc", name + ".zip");
         var msg = AssetRenamePlanner.FormatUnreadableArchivesError(new[] { zip });
         Assert.Contains("\n  名前: " + name, msg);                       // 名前が 1 行にそのまま出る
-        Assert.Contains("`daid archive restore asset <名前>`", msg);       // コマンドは名前を含まない形で示す
+        Assert.Contains("`daid archive restore asset -- <名前>`", msg);       // コマンドは名前を含まない形で示す
         foreach (var line in msg.Split('\n'))
             if (line.Contains("daid archive restore")) Assert.DoesNotContain(name, line.Replace(Path.GetFullPath(zip), ""));
     }
@@ -557,6 +557,7 @@ public class AssetRenamePlannerTests
         var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldName = name, OldArchived = true });
         var msg = Assert.Single(errors, e => e.Contains("アーカイブ済み"));
         Assert.Contains("\n  名前: " + name, msg);
+        Assert.Contains("`daid archive restore asset -- <名前>`", msg); // -- で、- で始まる名前がオプションと取り違えられない
         foreach (var line in msg.Split('\n'))
             if (line.Contains("daid archive restore")) Assert.DoesNotContain(name, line);
     }
