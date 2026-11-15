@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2-alpha] - 2026-11-15
+
 ### Added
 
 - **`daid asset rename <old-name> <new-name>`**（#7）。ID を変えずに装置の名前とフォルダを変える
