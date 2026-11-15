@@ -104,6 +104,27 @@ public static class CommandHelper
     }
 
     /// <summary>
+    /// 読み取り中心の入口（backup）用のロック取得。書き込み権限が無くてロックファイルを作れないとき
+    /// （読み取り専用の場所）は、警告を出して null を返す（ロックなしで続けてよい）。
+    /// 別の処理が持っているとき（busy）は <paramref name="busy"/> を true にして null を返す（止めること）。
+    /// </summary>
+    public static ProjectLock.Handle? AcquireProjectLockTolerant(string dataDir, out bool busy)
+    {
+        busy = false;
+        try
+        {
+            var handle = ProjectLock.TryAcquire(dataDir);
+            busy = handle == null;
+            return handle;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.Error.WriteLine($"[WARN] ロックファイルを作れないため（書き込み権限がありません）、ロックなしで続けます: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// カレントディレクトリから上方向に最大2階層まで design_aid.db を探索し、
     /// プロジェクトルート（design_aid.db が存在するディレクトリ）を返す。
     /// 見つからない場合は null。

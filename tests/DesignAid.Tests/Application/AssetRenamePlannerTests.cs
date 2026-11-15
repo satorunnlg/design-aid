@@ -97,6 +97,44 @@ public class AssetRenamePlannerTests
         Assert.NotNull(AssetRenamePlanner.ValidateNewName(nfd));
     }
 
+    [Theory]
+    [InlineData("CONIN$")]
+    [InlineData("conout$")]
+    [InlineData("CONIN$.txt")]
+    [InlineData("CONOUT$ .log")]
+    public void ValidateName_コンソールの予約名_拒否する(string name)
+    {
+        Assert.NotNull(AssetRenamePlanner.ValidateName(name));
+    }
+
+    [Theory]
+    [InlineData(0)]   // 高サロゲートだけ（InlineData には孤立サロゲートの文字列を渡せないので、テスト内で作る）
+    [InlineData(1)]   // 低サロゲートだけ
+    [InlineData(2)]   // 末尾の高サロゲート
+    public void 孤立サロゲートを含む名前は_例外にせず理由付きで拒否する(int kind)
+    {
+        var name = kind switch
+        {
+            0 => "a" + (char)0xD800 + "b",
+            1 => "a" + (char)0xDC00 + "b",
+            _ => "abc" + (char)0xD83D,
+        };
+        var e1 = AssetRenamePlanner.ValidateName(name);
+        var e2 = AssetRenamePlanner.ValidateNewName(name);
+        Assert.NotNull(e1);
+        Assert.Contains("サロゲート", e1);
+        Assert.NotNull(e2);
+        Assert.NotEmpty(AssetRenamePlanner.CheckPreconditions(
+            new AssetRenamePlanner.Facts("old", name, true, true, false, false, false, false)));
+    }
+
+    [Fact]
+    public void 対になったサロゲート_絵文字_は通る()
+    {
+        Assert.Null(AssetRenamePlanner.ValidateName("a" + char.ConvertFromUtf32(0x1F600) + "b"));
+        Assert.Null(AssetRenamePlanner.ValidateNewName("a" + char.ConvertFromUtf32(0x1F600) + "b"));
+    }
+
     [Fact]
     public void ValidateNewName_UTF8で255バイトまで_境界()
     {

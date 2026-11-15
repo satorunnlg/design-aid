@@ -122,7 +122,19 @@ public class SetupCommand : Command
             }
             else
             {
-                Console.WriteLine($"  [存在] .gitignore");
+                // 既存の .gitignore にロックファイルの行が無ければ追記する
+                var existingLines = await File.ReadAllLinesAsync(gitignorePath);
+                if (!existingLines.Any(l => l.Trim() == DesignAid.Application.Services.ProjectLock.FileName))
+                {
+                    var prefix = existingLines.Length > 0 && existingLines[^1].Length > 0 ? Environment.NewLine : "";
+                    await File.AppendAllTextAsync(gitignorePath,
+                        $"{prefix}{Environment.NewLine}# プロジェクト共通のロックファイル{Environment.NewLine}{DesignAid.Application.Services.ProjectLock.FileName}{Environment.NewLine}");
+                    Console.WriteLine($"  [追記] .gitignore（{DesignAid.Application.Services.ProjectLock.FileName}）");
+                }
+                else
+                {
+                    Console.WriteLine($"  [存在] .gitignore");
+                }
             }
 
             // SQLite データベースの初期化（マイグレーション適用）

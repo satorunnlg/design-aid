@@ -206,6 +206,13 @@ public class RestoreCommand : Command
                 continue;
             }
 
+            // ロックファイル（サブディレクトリの同じ名前も含む）は展開しない。
+            // 復元中は自分がそのファイルを開いているので、上書きしようとすると失敗する
+            if (entry.Name == DesignAid.Application.Services.ProjectLock.FileName)
+            {
+                continue;
+            }
+
             var destPath = Path.Combine(destDir, entry.FullName);
             var destDirPath = Path.GetDirectoryName(destPath);
 

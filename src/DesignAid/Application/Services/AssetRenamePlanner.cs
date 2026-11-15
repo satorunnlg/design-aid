@@ -13,7 +13,7 @@ public static class AssetRenamePlanner
     /// <summary>Windows の予約デバイス名（拡張子付きでも予約として扱われる）。</summary>
     private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "CON", "PRN", "AUX", "NUL",
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
         "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
         // 上付き数字（U+00B9 U+00B2 U+00B3）も Windows では予約デバイス名として扱われる
@@ -36,6 +36,14 @@ public static class AssetRenamePlanner
             return "装置名の末尾に '.' は使えません（Windows でフォルダ名にできません）";
         if (name.Length > 255)
             return "装置名が長すぎます（255 文字まで）";
+
+        // 孤立サロゲートは UTF-8 に変換できず、Normalize が例外になる。理由付きで拒否する
+        for (var k = 0; k < name.Length; k++)
+        {
+            if (char.IsHighSurrogate(name[k]) && k + 1 < name.Length && char.IsLowSurrogate(name[k + 1])) { k++; continue; }
+            if (char.IsSurrogate(name[k]))
+                return "装置名に不正な Unicode（対になっていないサロゲート）が含まれています";
+        }
 
         // Path.GetInvalidFileNameChars は OS で内容が違う（Unix では '/' と NUL しか返さない）ので使わず、
         // どこにクローンしても同じ結果になるよう Windows の禁止文字を固定で持つ（Unix の禁止文字も含まれる）。

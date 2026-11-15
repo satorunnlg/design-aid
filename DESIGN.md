@@ -1118,7 +1118,10 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 **同時の実行の排他（プロジェクト共通ロック `ProjectLock`）:** design_aid.db と同じディレクトリの `.daid.lock` を
 `FileShare.None` で開いたハンドルで持つ。**ファイルは置いたままにする**（`DeleteOnClose` にしない。削除の最中に開いて
 `UnauthorizedAccessException` になる競合と、Unix で解放と取得が重なって別の inode のファイルを同時に持てる隙をなくすため。
-開いていなければロックされていない。`.gitignore` には `.daid.lock` を入れる。`daid setup` が作る `.gitignore` には入れてある）。
+開いていなければロックされていない。`.gitignore` には `.daid.lock` を入れる。`daid setup` が作る `.gitignore` には入れてあり、既存の `.gitignore` に行が無ければ `setup` が追記する）。
+`backup` は、書き込み権限が無くてロックファイルを作れない（読み取り専用の場所）ときは、警告を出してロックなしで続け、
+別の処理が持っているときは止める。コピーと ZIP が済んだら解放し、S3 へのアップロードの間は持たない。
+`restore` は、zip に入っているロックファイル（サブディレクトリの同じ名前を含む）を展開しない。
 **取れなければ待たずに止める**（待つ形は、以前のロック待ちのハングの原因になるので入れない）。ハンドルで持つので、
 プロセスが落ちてもロックは残らない。同じ呼び出しの流れ（AsyncLocal）で既に持っているときは二重に取らず、何もしない
 ハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない。再入の判定のキーはパスを正規化し、Windows では大文字小文字を
@@ -1126,6 +1129,15 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 EWOULDBLOCK の errno = 11 / 35）。権限のエラー（`UnauthorizedAccessException`）や、場所が無い・容量不足などの IO エラーは
 busy にせず、元の原因のまま返す。`--json` のコマンド（`sync`・`deploy`・`asset rename`）は、取れないとき標準出力に失敗の
 JSON を 1 つだけ出す。
+
+**既知の限界:**
+- 再入の判定のキーはパスの正規化（フルパス・区切り文字・末尾の区切り、Windows は大文字小文字を無視）までで、
+  junction・symlink・8.3 短縮名・macOS の大文字小文字を区別しないボリュームなど、**同じ場所を別の表記で指す場合は
+  同じキーにならない**。そのとき再入が見分けられず、内側の取得が「別の変更が実行中」で止まる（誤って止まるだけで、
+  排他が破れる方向の誤りではない）。macOS は既定のボリュームが大文字小文字を区別しないが、キーは Unix として
+  大文字小文字を区別して比べる（同じ理由で、誤って止まる側）。
+- Unix では、ロックを保持している間にロックファイルを手で消す（または別のファイルに差し替える）と、次に取る処理が
+  別の inode を開いてしまい、**排他が破れる**。ロックファイルは消さない・置き換えない。
 
 装置の状態（フォルダ・asset.json・asset_links.json・DB の行・索引）を変える入口がこのロックに参加する:
 `sync`、`setup`、`asset add / update / remove / rename / link / unlink`、`part add / update / remove / link`、
@@ -1135,13 +1147,19 @@ JSON を 1 つだけ出す。
 `status`・`search` など）は参加しない。**対象外:** `config set`（Settings の表の設定値だけを書く。装置の状態ではない）、
 `dashboard`・`dashboard stop`（PID ファイルだけ）、`update`（ツール自体の更新）、`asset bom --export`（利用者が指定する出力先）。
 **入口の追加の漏れは、静的な検査（`ProjectLockCoverageTests`）が捕まえる:** Commands・`DashboardService`・MCP のツールの
-ソースを走査し、`SaveChanges`・`File.Write`・`Directory.Delete` などを呼ぶ入口が `AcquireProjectLock` / `ProjectLock` も
-呼ぶことを確かめる。例外は検査の中に理由付きで明示している。
+ソースを走査する（**コメントと文字列を除いてから**照らし、**`using` で取得する形**を要求し、コマンドはハンドラとして
+登録されたメソッドごと、ダッシュボードと MCP は public メソッドごとに見る）。`SaveChanges`・`File.Write/Move/Replace/Create/
+AppendAll`・`new StreamWriter`・`new FileStream`・`Directory.Delete/Move/CreateDirectory`・`ExecuteDelete`・`ExecuteSql`・
+`Process.Start` などを呼ぶ入口が `AcquireProjectLock` / `ProjectLock.TryAcquire` を `using` で取ることを確かめる。例外は検査の中に
+理由付きで明示している（検索のキャッシュの書き込み（`search` と MCP の `SearchDesigns`）は、装置の状態ではなくキャッシュで、
+原子的に書くのでロックを取らない）。
 
 **検索キャッシュの古さの判定（`VectorSearchService`）:** VectorIndex の状態の判定値（件数・最大 Id・Id の合計・最後の
 `UpdatedAt`）を、グラフを作ったときに保持し、検索のたびに 1 本の集約クエリで今の状態と比べ、違えばメモリ上とディスク上の
-キャッシュを捨てて作り直す。ディスクのキャッシュには、構築時の判定値を横（`hnsw_index.bin.stamp`）に付け、読み込むとき
-**今読んだ行から作った判定値**と照らして、違えば使わない（判定値は行を読んだのと同じ結果から作るので、間に更新が入っても
+キャッシュを捨てて作り直す。ディスクのキャッシュは、構築時の判定値を **bin の先頭のヘッダー（識別子 + 判定値の 1 行）** に入れた 1 つのファイルとし、
+一時の名前で書いてから置き換える（原子的。旧形式の `.stamp` は消す）。読み込むとき
+**今読んだ行から作った判定値**と照らして、違えば・ヘッダーが無ければ（旧形式）・読めなければ（別のプロセスが書いている
+最中など）使わず、例外にせず作り直す（判定値は行を読んだのと同じ結果から作るので、間に更新が入っても
 ずれない）。行の読み込みは `AsNoTracking` にする（長く生きる DbContext が追跡中の古い行を返すと、判定値が古いままになる）。
 `UpdatedAt` の列は既にあるので、マイグレーションは増やしていない。限界: 行の中身を `UpdatedAt` を進めずに書き換える処理は
 検知できない（従来からある限界）。

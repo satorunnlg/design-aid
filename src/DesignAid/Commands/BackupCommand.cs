@@ -85,8 +85,8 @@ public class BackupCommand : Command
 
             // バックアップは読み取りだが、改名などの途中の状態（フォルダと DB が食い違う瞬間）を取り込まないよう、
             // プロジェクト共通のロックに参加する
-            using var backupLock = DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir);
-            if (backupLock == null)
+            using var backupLock = CommandHelper.AcquireProjectLockTolerant(dataDir, out var lockBusy);
+            if (lockBusy)
             {
                 Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
                 return 1;
@@ -167,6 +167,9 @@ public class BackupCommand : Command
                 {
                     Console.WriteLine("  (ドライラン: ZIP は作成されません)");
                 }
+
+                // コピーと ZIP が済んだので、ロックを解放する（S3 へのアップロードの間は持たない）
+                backupLock?.Dispose();
 
                 if (localOnly)
                 {

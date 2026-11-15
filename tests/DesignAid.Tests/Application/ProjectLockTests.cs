@@ -407,8 +407,7 @@ public class ProjectLockTests : IDisposable
         var (vs, db, cache, _) = await SetUpIndexedAsync();
         using (vs) using (db)
         {
-            var stampFile = cache + ".stamp";
-            var before = await File.ReadAllTextAsync(stampFile);
+            var before = ReadCacheHeader(cache);
 
             using (var other = NewDb())
             {
@@ -419,7 +418,7 @@ public class ProjectLockTests : IDisposable
             }
             await vs.SearchAsync("旧装置の文書", threshold: -1, limit: 10);
 
-            Assert.NotEqual(before, await File.ReadAllTextAsync(stampFile)); // 作り直されて、判定値が更新された
+            Assert.NotEqual(before, ReadCacheHeader(cache)); // 作り直されて、判定値が更新された
         }
     }
 
@@ -443,7 +442,7 @@ public class ProjectLockTests : IDisposable
             await other.SaveChangesAsync();
         }
         Assert.True(File.Exists(cache));
-        var stampBefore = await File.ReadAllTextAsync(cache + ".stamp");
+        var stampBefore = ReadCacheHeader(cache);
 
         using var db2 = NewDb();
         using var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache); // 新しいインスタンス
@@ -451,7 +450,7 @@ public class ProjectLockTests : IDisposable
 
         Assert.Equal("fresh", Assert.Single(hits).AssetName);
         // 古いディスクのキャッシュは使われず、作り直されて判定値が更新された
-        Assert.NotEqual(stampBefore, await File.ReadAllTextAsync(cache + ".stamp"));
+        Assert.NotEqual(stampBefore, ReadCacheHeader(cache));
     }
 
     [Fact]
@@ -476,6 +475,119 @@ public class ProjectLockTests : IDisposable
 
         Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
         Assert.Contains(r.Warnings, w => w.Contains("キャッシュファイルを消せませんでした"));
+    }
+
+    /// <summary>キャッシュ（bin）の先頭の 1 行（識別子と判定値）。</summary>
+    private static string ReadCacheHeader(string cache)
+    {
+        using var fs = new FileStream(cache, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new List<byte>();
+        int b;
+        while (bytes.Count < 256 && (b = fs.ReadByte()) >= 0 && b != '\n') bytes.Add((byte)b);
+        return System.Text.Encoding.UTF8.GetString(bytes.ToArray());
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_判定値は1つのファイルのヘッダーにあり_旧形式のstampや一時ファイルは残らない()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        using (vs) using (db)
+        {
+            Assert.StartsWith("DAIDHNSW1|", ReadCacheHeader(cache));
+            Assert.False(File.Exists(cache + ".stamp"));
+            Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
+        }
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_ヘッダーの無い旧形式のbinと残った旧stampは_一致しないとして作り直し_stampは消す()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        vs.Dispose(); db.Dispose();
+        await File.WriteAllBytesAsync(cache, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }); // ヘッダーの無い旧形式
+        await File.WriteAllTextAsync(cache + ".stamp", "2|2|3|1");
+
+        using var db2 = NewDb();
+        using var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache);
+        var hits = await vs2.SearchAsync("旧装置の文書", threshold: -1, limit: 10);
+
+        Assert.Equal(2, hits.Count);
+        Assert.StartsWith("DAIDHNSW1|", ReadCacheHeader(cache)); // 作り直された
+        Assert.False(File.Exists(cache + ".stamp"));
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_別のプロセスがキャッシュを開いたまま排他していても_検索は落ちない()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        vs.Dispose(); db.Dispose();
+
+        using (new FileStream(cache, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) // 読み書きの最中を模す
+        {
+            using var db2 = NewDb();
+            using var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache);
+            var hits = await vs2.SearchAsync("旧装置の文書", threshold: -1, limit: 10);
+            Assert.Equal(2, hits.Count); // 例外にならず、作り直した結果で答える
+        }
+    }
+
+    [Fact]
+    public async Task Backup_ロックファイルを作れない権限のエラーなら_警告してロックなしで続け_busyなら止める()
+    {
+        await AddAssetAsync("old");
+        var work = Path.Combine(_root, "cwd");
+        Directory.CreateDirectory(work);
+        Directory.SetCurrentDirectory(work);
+        Directory.CreateDirectory(Path.Combine(_root, ProjectLock.FileName)); // ロックファイルを開けない（権限のエラー）
+
+        var (code, stdout, stderr) = await RunAsync(new DesignAid.Commands.BackupCommand(), "--local-only");
+
+        Assert.Equal(0, code);
+        Assert.Contains("ロックなしで続けます", stderr);
+        Assert.Single(Directory.GetFiles(work, "design-aid-backup_*.zip"));
+        Directory.SetCurrentDirectory(_savedCwd);
+    }
+
+    [Fact]
+    public async Task Restore_zipに入っているロックファイルは展開しない_サブディレクトリの同じ名前も()
+    {
+        var zipPath = Path.Combine(_root, "backup.zip");
+        using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            foreach (var name in new[] { "assets/a/asset.json", ProjectLock.FileName, "sub/" + ProjectLock.FileName })
+            {
+                using var w = new StreamWriter(zip.CreateEntry(name).Open());
+                w.Write("{}");
+            }
+        }
+
+        var (code, _, err) = await RunAsync(new DesignAid.Commands.RestoreCommand(), zipPath, "--data-path", _root, "--force");
+
+        Assert.Equal(0, code);
+        Assert.DoesNotContain("ERROR", err);
+        Assert.True(File.Exists(Path.Combine(_assetsDir, "a", "asset.json")));
+        Assert.False(File.Exists(Path.Combine(_root, "sub", ProjectLock.FileName)));
+    }
+
+    [Fact]
+    public async Task Setup_既存のgitignoreにロックファイルの行が無ければ追記し_あれば足さない()
+    {
+        var work = Path.Combine(_root, "setup-cwd");
+        Directory.CreateDirectory(work);
+        Directory.SetCurrentDirectory(work);
+        var proj = Path.Combine(work, "p1");
+        Directory.CreateDirectory(proj);
+        await File.WriteAllTextAsync(Path.Combine(proj, ".gitignore"), "*.db\nnode_modules/"); // 末尾の改行なし
+
+        var (code1, _, err1) = await RunAsync(new DesignAid.Commands.SetupCommand(), "p1");
+        var after1 = await File.ReadAllTextAsync(Path.Combine(proj, ".gitignore"));
+        var (_, _, _) = await RunAsync(new DesignAid.Commands.SetupCommand(), "p1", "--force"); // 2 回目は force なしだと既に初期化済みで止まる
+
+        Assert.Equal(0, code1);
+        Assert.DoesNotContain("ERROR", err1);
+        Assert.Contains("node_modules/", after1);
+        Assert.Single(after1.Split('\n'), l => l.Trim() == ProjectLock.FileName);
+        Directory.SetCurrentDirectory(_savedCwd);
     }
 
     // ---- --json の早期の失敗 ----

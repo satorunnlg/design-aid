@@ -41,7 +41,47 @@ public class VectorSearchService : IDisposable
             : new Stamp(entries.Count, entries.Max(e => e.Id), entries.Sum(e => (long)e.Id),
                 entries.Max(e => e.UpdatedAt).Ticks);
 
-    private string StampFilePath => _hnswIndexPath + ".stamp";
+    /// <summary>
+    /// 旧形式の判定値ファイル（<c>.stamp</c>）の場所。現在は判定値を bin のヘッダーに入れているので使わない。
+    /// 残っていれば消す。
+    /// </summary>
+    private string LegacyStampFilePath => _hnswIndexPath + ".stamp";
+
+    /// <summary>キャッシュ（bin）の先頭に付けるヘッダーの識別子。ヘッダーの無い旧形式の bin は「一致しない」として作り直す。</summary>
+    private const string CacheMagic = "DAIDHNSW1";
+
+    /// <summary>
+    /// キャッシュを開き、ヘッダーの判定値が <paramref name="expected"/> と一致するときだけ、
+    /// グラフの先頭に位置を合わせたストリームを返す。<b>開けない・読めない・ヘッダーが無い・不一致は、すべて null</b>
+    /// （別のプロセスが消したり書いたりしている最中でも、例外にしない）。
+    /// </summary>
+    private FileStream? TryOpenCache(string expected)
+    {
+        FileStream? fs = null;
+        try
+        {
+            fs = new FileStream(_hnswIndexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var buf = new List<byte>();
+            int b;
+            while (buf.Count < 256 && (b = fs.ReadByte()) >= 0)
+            {
+                if (b == '\n')
+                {
+                    var header = System.Text.Encoding.UTF8.GetString(buf.ToArray());
+                    if (header == $"{CacheMagic}|{expected}") return fs;
+                    break;
+                }
+                buf.Add((byte)b);
+            }
+            fs.Dispose();
+            return null;
+        }
+        catch
+        {
+            fs?.Dispose();
+            return null;
+        }
+    }
     private bool _disposed;
 
     /// <summary>
@@ -408,13 +448,13 @@ public class VectorSearchService : IDisposable
         // キャッシュファイルからの復元を試みる。ただし、構築したときの判定値が、今読んだ行の判定値と
         // 一致するときだけ（件数が同じでも行が入れ替わったキャッシュを、取り違えて使わない）
         var entriesStamp = StampOf(entries);
-        var cacheStampMatches = File.Exists(StampFilePath)
-            && File.ReadAllText(StampFilePath).Trim() == entriesStamp.ToText();
-        if (cacheStampMatches && File.Exists(_hnswIndexPath))
+        // 読み取りはすべて TryOpenCache の中で守る（別のプロセスが消したり書いたりしていても、検索を落とさない）
+        using var cacheStream = TryOpenCache(entriesStamp.ToText());
+        if (cacheStream != null)
         {
             try
             {
-                using var stream = File.OpenRead(_hnswIndexPath);
+                var stream = cacheStream;
                 var deserialized = SmallWorld<float[], float>.DeserializeGraph(
                     vectors,
                     CosineDistance.SIMDForUnits,
@@ -457,12 +497,25 @@ public class VectorSearchService : IDisposable
                 Directory.CreateDirectory(directory);
             }
 
-            using (var stream = File.Create(_hnswIndexPath))
+            // 判定値をヘッダーに入れて 1 つのファイルにし、一時の名前で書いてから置き換える（原子的）。
+            // 読む側は、途中まで書かれたファイルや、判定値だけ新しいファイルを見ない
+            var tmp = _hnswIndexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                _hnswIndex.SerializeGraph(stream);
-                await stream.FlushAsync();
+                using (var stream = File.Create(tmp))
+                {
+                    var header = System.Text.Encoding.UTF8.GetBytes($"{CacheMagic}|{stamp.ToText()}\n");
+                    stream.Write(header, 0, header.Length);
+                    _hnswIndex.SerializeGraph(stream);
+                    await stream.FlushAsync();
+                }
+                File.Move(tmp, _hnswIndexPath, overwrite: true);
             }
-            await File.WriteAllTextAsync(StampFilePath, stamp.ToText());
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            }
+            try { if (File.Exists(LegacyStampFilePath)) File.Delete(LegacyStampFilePath); } catch { }
         }
         catch
         {
@@ -492,9 +545,9 @@ public class VectorSearchService : IDisposable
             {
                 File.Delete(_hnswIndexPath);
             }
-            if (File.Exists(StampFilePath))
+            if (File.Exists(LegacyStampFilePath))
             {
-                File.Delete(StampFilePath);
+                File.Delete(LegacyStampFilePath);
             }
         }
         catch
