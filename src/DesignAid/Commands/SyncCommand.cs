@@ -34,7 +34,7 @@ public class SyncCommand : Command
     private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb, bool restoreJson)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
-        using var projectLock = CommandHelper.AcquireProjectLock();
+        using var projectLock = CommandHelper.AcquireProjectLock(json);
         if (projectLock == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var assetsDir = CommandHelper.GetAssetsDirectory();

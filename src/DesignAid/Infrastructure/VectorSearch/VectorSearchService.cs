@@ -22,7 +22,26 @@ public class VectorSearchService : IDisposable
     /// 別のインスタンス・別のプロセス（asset rename など）が行を消したり足したりすると変わる。
     /// 検索のたびに現在の状態と比べ、違えばメモリ上とディスク上のキャッシュを捨てて作り直す。
     /// </summary>
-    private (int Count, int MaxId, long SumId)? _loadedStamp;
+    private Stamp? _loadedStamp;
+
+    /// <summary>VectorIndex の状態の判定値（件数・最大 Id・Id の合計・最後の更新時刻）。</summary>
+    private readonly record struct Stamp(int Count, int MaxId, long SumId, long MaxUpdatedTicks)
+    {
+        /// <summary>キャッシュファイルの横に保存する形。</summary>
+        public string ToText() => $"{Count}|{MaxId}|{SumId}|{MaxUpdatedTicks}";
+    }
+
+    /// <summary>
+    /// 読み込んだ行そのものから判定値を作る。<b>グラフを作る・読むときは、行を読んだのと同じ結果から</b>作るので、
+    /// 読んだ行と判定値がずれない（別の処理が間に更新しても、古い判定値で新しいグラフを作ったと誤解しない）。
+    /// </summary>
+    private static Stamp StampOf(List<VectorIndexEntry> entries)
+        => entries.Count == 0
+            ? default
+            : new Stamp(entries.Count, entries.Max(e => e.Id), entries.Sum(e => (long)e.Id),
+                entries.Max(e => e.UpdatedAt).Ticks);
+
+    private string StampFilePath => _hnswIndexPath + ".stamp";
     private bool _disposed;
 
     /// <summary>
@@ -257,7 +276,7 @@ public class VectorSearchService : IDisposable
     /// </summary>
     public async Task RebuildIndexAsync(CancellationToken ct = default)
     {
-        var entries = await _context.VectorIndex.ToListAsync(ct);
+        var entries = await _context.VectorIndex.AsNoTracking().ToListAsync(ct);
 
         if (entries.Count == 0)
         {
@@ -293,36 +312,44 @@ public class VectorSearchService : IDisposable
             _idMapping.Add((hnswIds[i], entries[i].Id));
         }
 
-        _loadedStamp = await ComputeStampAsync(ct);
+        var stamp = StampOf(entries);
+        _loadedStamp = stamp;
 
-        // グラフをファイルに保存
-        await SerializeIndexAsync(vectors);
+        // グラフをファイルに保存（判定値を横に付ける）
+        await SerializeIndexAsync(vectors, stamp);
     }
 
-    /// <summary>VectorIndex の現在の状態（件数・最大 Id・Id の合計）。</summary>
-    private async Task<(int Count, int MaxId, long SumId)> ComputeStampAsync(CancellationToken ct)
+    /// <summary>VectorIndex の現在の状態の判定値。</summary>
+    private async Task<Stamp> ComputeStampAsync(CancellationToken ct)
     {
-        var count = await _context.VectorIndex.CountAsync(ct);
-        if (count == 0) return (0, 0, 0);
-        var max = await _context.VectorIndex.MaxAsync(v => v.Id, ct);
-        var sum = await _context.VectorIndex.SumAsync(v => (long)v.Id, ct);
-        return (count, max, sum);
+        // 1 本の集約で、件数・最大 Id・Id の合計・最後の更新時刻を取る
+        var agg = await _context.VectorIndex
+            .GroupBy(_ => 1)
+            .Select(g => new { C = g.Count(), M = g.Max(v => v.Id), S = g.Sum(v => (long)v.Id), U = g.Max(v => v.UpdatedAt) })
+            .FirstOrDefaultAsync(ct);
+        return agg == null ? default : new Stamp(agg.C, agg.M, agg.S, agg.U.Ticks);
     }
 
     /// <summary>
     /// ディスク上の HNSW キャッシュを消す。行を消した別の処理（asset rename など）が、
     /// 古いグラフを次の検索で読み込ませないために呼ぶ。消せなくても例外にしない。
     /// </summary>
-    public static void DeleteCacheFile(string hnswIndexPath)
+    /// <returns>消せたら（または無ければ）true。消せなかったら false（呼び出し側が警告に出す）</returns>
+    public static bool DeleteCacheFile(string hnswIndexPath)
     {
-        try
+        var ok = true;
+        foreach (var path in new[] { hnswIndexPath, hnswIndexPath + ".stamp" })
         {
-            if (File.Exists(hnswIndexPath)) File.Delete(hnswIndexPath);
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch
+            {
+                ok = false;
+            }
         }
-        catch
-        {
-            // 削除失敗は無視
-        }
+        return ok;
     }
 
     /// <summary>
@@ -370,7 +397,7 @@ public class VectorSearchService : IDisposable
             return;
         }
 
-        var entries = await _context.VectorIndex.ToListAsync(ct);
+        var entries = await _context.VectorIndex.AsNoTracking().ToListAsync(ct);
         if (entries.Count == 0)
         {
             return;
@@ -378,8 +405,12 @@ public class VectorSearchService : IDisposable
 
         var vectors = entries.Select(e => Normalize(FromBlob(e.Embedding))).ToList();
 
-        // キャッシュファイルからの復元を試みる
-        if (File.Exists(_hnswIndexPath))
+        // キャッシュファイルからの復元を試みる。ただし、構築したときの判定値が、今読んだ行の判定値と
+        // 一致するときだけ（件数が同じでも行が入れ替わったキャッシュを、取り違えて使わない）
+        var entriesStamp = StampOf(entries);
+        var cacheStampMatches = File.Exists(StampFilePath)
+            && File.ReadAllText(StampFilePath).Trim() == entriesStamp.ToText();
+        if (cacheStampMatches && File.Exists(_hnswIndexPath))
         {
             try
             {
@@ -398,7 +429,7 @@ public class VectorSearchService : IDisposable
                 {
                     _idMapping.Add((i, entries[i].Id));
                 }
-                _loadedStamp = await ComputeStampAsync(ct);
+                _loadedStamp = entriesStamp;
                 return;
             }
             catch
@@ -414,7 +445,7 @@ public class VectorSearchService : IDisposable
     /// <summary>
     /// HNSW グラフをファイルにシリアライズする。
     /// </summary>
-    private async Task SerializeIndexAsync(List<float[]> vectors)
+    private async Task SerializeIndexAsync(List<float[]> vectors, Stamp stamp)
     {
         if (_hnswIndex == null) return;
 
@@ -426,9 +457,12 @@ public class VectorSearchService : IDisposable
                 Directory.CreateDirectory(directory);
             }
 
-            using var stream = File.Create(_hnswIndexPath);
-            _hnswIndex.SerializeGraph(stream);
-            await stream.FlushAsync();
+            using (var stream = File.Create(_hnswIndexPath))
+            {
+                _hnswIndex.SerializeGraph(stream);
+                await stream.FlushAsync();
+            }
+            await File.WriteAllTextAsync(StampFilePath, stamp.ToText());
         }
         catch
         {
@@ -457,6 +491,10 @@ public class VectorSearchService : IDisposable
             if (File.Exists(_hnswIndexPath))
             {
                 File.Delete(_hnswIndexPath);
+            }
+            if (File.Exists(StampFilePath))
+            {
+                File.Delete(StampFilePath);
             }
         }
         catch

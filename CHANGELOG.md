@@ -21,10 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     何も変えずに終了コード 1 で止まる。途中で失敗したら逆順に戻す
   - `--json` / `--quiet`
   - 注意: 0.6.1-alpha 以前の daid の `asset update` は `previous_names` を消す。改名を使ったら、同じ DB と assets/ を扱う daid を全部更新する
-- プロジェクト共通のロック（`.daid.lock`。待たずに止める）。sync・asset add/update/remove/rename/link/unlink・part link・
-  archive asset/restore・restore・MCP の書き込み系が参加し、同時の実行で中間状態を取り込み合わないようにした
-- 改名のあと、文書チャンクの索引行を消し、HNSW のキャッシュを無効にする（起動中の検索も VectorIndex の変化を検知して作り直す）
-- 装置名: 上付き数字の予約名（`COM¹` など）を拒否。新しく付ける名前は UTF-8 で 255 バイトまで
+- プロジェクト共通のロック（`.daid.lock`。置いたままにして `FileShare.None` で保持し、待たずに止める）。sync・setup・
+  asset add/update/remove/rename/link/unlink・part add/update/remove/link・archive asset/part/restore・deploy・restore・backup・
+  ダッシュボードの更新・MCP の書き込み系が参加し、同時の実行で中間状態を取り込み合わないようにした。
+  参加の漏れは静的な検査（`ProjectLockCoverageTests`）が捕まえる
+- 改名のあと、文書チャンクの索引行を消し、HNSW のキャッシュを無効にする（起動中の検索も VectorIndex の変化を件数・Id・更新時刻の
+  判定値で検知して作り直す。ディスクのキャッシュにも構築時の判定値を付け、一致しなければ使わない）
+- 装置名: 上付き数字の予約名（`COM¹` など）と、末尾の空白付きの予約名（`CON .txt`）を拒否。新しく付ける名前は UTF-8 で 255 バイトまで
+  （macOS の NFD 分解後の長さも数える）
 - `asset add` が装置名を検査するようになった（`asset rename` と同じ検査。空・パス区切り・`..`・
   Windows の禁止文字や予約名・末尾の `.` を終了コード 2 で拒否する）
 

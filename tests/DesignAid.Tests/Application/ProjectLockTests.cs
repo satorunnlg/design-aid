@@ -5,6 +5,7 @@ using System.Text.Json;
 using DesignAid.Application.Services;
 using DesignAid.Commands;
 using DesignAid.Commands.Asset;
+using DesignAid.Commands.Part;
 using DesignAid.Domain.Entities;
 using DesignAid.Infrastructure.Embedding;
 using DesignAid.Infrastructure.FileSystem;
@@ -119,7 +120,6 @@ public class ProjectLockTests : IDisposable
         {
             Assert.NotNull(again);
         }
-        Assert.False(File.Exists(Path.Combine(_root, ProjectLock.FileName)));
     }
 
     [Fact]
@@ -304,6 +304,175 @@ public class ProjectLockTests : IDisposable
             Assert.True(File.Exists(cache));
             Assert.Equal(2, (await vs.SearchAsync("旧装置の文書", threshold: -1, limit: 10)).Count);
         }
+    }
+
+    [Fact]
+    public void ProjectLock_ロックファイルの場所がディレクトリなど開けない_busyにせず権限のエラーのまま投げる()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ProjectLock.FileName)); // ファイルとして開けない
+        Assert.Throws<UnauthorizedAccessException>(() => ProjectLock.TryAcquire(_root));
+    }
+
+    [Fact]
+    public async Task ProjectLock_再入の判定は_区切り文字や末尾の区切りの違いを正規化して比べる()
+    {
+        var holder = Task.Run(() =>
+        {
+            using var h = ProjectLock.TryAcquire(_root);
+            Assert.NotNull(h);
+            var variants = new List<string>
+            {
+                _root + Path.DirectorySeparatorChar,
+                _root.Replace('\\', '/'),
+                Path.Combine(_root, "assets", ".."),
+            };
+            if (OperatingSystem.IsWindows()) variants.Add(_root.ToUpperInvariant()); // Windows は大文字小文字を区別しない
+            foreach (var v in variants)
+            {
+                using var inner = ProjectLock.TryAcquire(v);
+                Assert.True(inner != null && inner.IsReentrant, v);
+            }
+        });
+        await holder;
+    }
+
+    [Fact]
+    public async Task 改名の途中では_part_archive_part_deploy_backup_syncのjsonも待たずに止まる()
+    {
+        await AddAssetAsync("old");
+        var (pc, _, perr) = await RunAsync(new PartAddCommand(), "P-1", "--name", "部品", "--type", "Fabricated", "--no-git");
+        Assert.DoesNotContain("ERROR", perr);
+        var reached = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var rename = Task.Run(async () =>
+        {
+            using var db = NewDb();
+            return await new AssetRenameService(db)
+            {
+                StepHook = async step => { if (step == "after-json") { reached.SetResult(); await release.Task; } }
+            }.RenameAsync(_assetsDir, "old", "new");
+        });
+        await reached.Task;
+
+        var partDirBefore = Directory.Exists(Path.Combine(_root, "components", "P-1"));
+        var blocked = new (string Name, Command Cmd, string[] Args)[]
+        {
+            ("part add", new PartAddCommand(), new[] { "P-2", "--name", "x", "--no-git" }),
+            ("part update", new DesignAid.Commands.Part.PartUpdateCommand(), new[] { "P-1", "--name", "変えない" }),
+            ("part remove", new DesignAid.Commands.Part.PartRemoveCommand(), new[] { "P-1", "--force" }),
+            ("archive part", new DesignAid.Commands.Archive.ArchivePartCommand(), new[] { "P-1" }),
+            ("deploy", new DesignAid.Commands.DeployCommand(), new[] { "--dry-run" }),
+            ("backup", new DesignAid.Commands.BackupCommand(), new[] { "--local-only" }),
+        };
+        foreach (var (name, cmd, args) in blocked)
+        {
+            var (_, _, err) = await RunAsync(cmd, args);
+            Assert.True(err.Contains("別の変更が実行中"), $"{name}: {err}");
+        }
+        Assert.Equal(partDirBefore, Directory.Exists(Path.Combine(_root, "components", "P-1")));
+        Assert.False(Directory.Exists(Path.Combine(_root, "components", "P-2")));
+        Assert.Empty(Directory.GetFiles(_root, "design-aid-backup_*.zip"));
+
+        // --json のときは標準出力に失敗の JSON を 1 つだけ出す
+        var (_, syncOut, syncErr) = await RunAsync(new DesignAid.Commands.SyncCommand(), "--json");
+        AssertSingleFailureJson(syncOut);
+        Assert.Contains("別の変更が実行中", syncErr);
+        var (_, deployOut, _) = await RunAsync(new DesignAid.Commands.DeployCommand(), "--json", "--dry-run");
+        AssertSingleFailureJson(deployOut);
+
+        // ダッシュボードの更新も止まり、画面にはエラーのメッセージが出る
+        var dashboard = new DesignAid.Dashboard.Services.DashboardService(new TestDbFactory(_dbPath));
+        var id = (await NewDb().Assets.AsNoTracking().FirstAsync()).Id;
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => dashboard.UpdateAssetAsync(id, "変えない", null));
+        Assert.Contains("別の変更が実行中", ex.Message);
+
+        release.SetResult();
+        Assert.True((await rename).Success);
+        Assert.True(await dashboard.UpdateAssetAsync(id, "通る", null)); // 終われば通る
+    }
+
+    private sealed class TestDbFactory : IDbContextFactory<DesignAidDbContext>
+    {
+        private readonly string _path;
+        public TestDbFactory(string path) => _path = path;
+        public DesignAidDbContext CreateDbContext() => new(new DbContextOptionsBuilder<DesignAidDbContext>()
+            .UseSqlite($"Data Source={_path}").Options);
+    }
+
+    // ---- 検索キャッシュの古さの判定値 ----
+
+    [Fact]
+    public async Task 検索キャッシュ_行の中身だけの更新も更新時刻で検知して作り直す()
+    {
+        var (vs, db, cache, _) = await SetUpIndexedAsync();
+        using (vs) using (db)
+        {
+            var stampFile = cache + ".stamp";
+            var before = await File.ReadAllTextAsync(stampFile);
+
+            using (var other = NewDb())
+            {
+                var row = await other.VectorIndex.FirstAsync();
+                row.Content = "中身だけ更新"; // 件数も Id も変わらない
+                row.UpdatedAt = DateTime.UtcNow.AddHours(1);
+                await other.SaveChangesAsync();
+            }
+            await vs.SearchAsync("旧装置の文書", threshold: -1, limit: 10);
+
+            Assert.NotEqual(before, await File.ReadAllTextAsync(stampFile)); // 作り直されて、判定値が更新された
+        }
+    }
+
+    [Fact]
+    public async Task 検索キャッシュ_ディスクのキャッシュは_構築時と行が入れ替わっていれば使わない()
+    {
+        var (vs, db, cache, idOld) = await SetUpIndexedAsync();
+        vs.Dispose(); db.Dispose();
+
+        // 件数は同じまま、行を入れ替える（ディスクのキャッシュは古いグラフのまま）
+        var emb = await new MockEmbeddingProvider(8).GenerateEmbeddingAsync("新しい文書");
+        var bytes = new byte[emb.Length * sizeof(float)];
+        Buffer.BlockCopy(emb, 0, bytes, 0, bytes.Length);
+        using (var other = NewDb())
+        {
+            var oldRow = await other.VectorIndex.FirstAsync(v => v.AssetId == idOld.ToString());
+            other.VectorIndex.Remove(oldRow);
+            var fresh = Row(Guid.NewGuid(), "fresh", "asset_doc", Guid.NewGuid().ToString());
+            fresh.Embedding = bytes; fresh.Dimensions = emb.Length; fresh.Content = "新しい文書";
+            other.VectorIndex.Add(fresh);
+            await other.SaveChangesAsync();
+        }
+        Assert.True(File.Exists(cache));
+
+        using var db2 = NewDb();
+        using var vs2 = new VectorSearchService(db2, new MockEmbeddingProvider(8), cache); // 新しいインスタンス
+        var hits = await vs2.SearchAsync("新しい文書", threshold: -1, limit: 1);
+
+        Assert.Equal("fresh", Assert.Single(hits).AssetName);
+    }
+
+    [Fact]
+    public async Task 改名の途中のキャッシュ削除に失敗したら_結果の警告に出す()
+    {
+        await AddAssetAsync("old");
+        var idOld = (await NewDb().Assets.AsNoTracking().FirstAsync()).Id;
+        using (var db = NewDb())
+        {
+            db.VectorIndex.Add(Row(idOld, "old", "asset_doc", Guid.NewGuid().ToString()));
+            await db.SaveChangesAsync();
+        }
+        var cache = Path.Combine(_root, "hnsw_index.bin");
+        await File.WriteAllTextAsync(cache, "x");
+
+        AssetRenameResult r;
+        using (new FileStream(cache, FileMode.Open, FileAccess.Read, FileShare.None)) // 消せない状態にする
+        {
+            using var db = NewDb();
+            r = await new AssetRenameService(db) { HnswIndexPath = cache }.RenameAsync(_assetsDir, "old", "new");
+        }
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        Assert.Contains(r.Warnings, w => w.Contains("キャッシュファイルを消せませんでした"));
     }
 
     // ---- --json の早期の失敗 ----

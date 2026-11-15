@@ -6,7 +6,8 @@ namespace DesignAid.Application.Services;
 /// MCP の書き込み系）が、同時に 2 つ走って中間状態を取り込み合わないようにする。
 /// <para>
 /// design_aid.db と同じディレクトリのロックファイルを <c>FileShare.None</c> + <c>DeleteOnClose</c> で開き、
-/// そのハンドルを持っている間がロック中である。<b>プロセスが落ちても OS がハンドルを閉じるので残らない。</b>
+/// そのハンドルを持っている間がロック中である。<b>プロセスが落ちても OS がハンドルを閉じるので、ロックは残らない</b>
+/// （ファイル自体は置いたままだが、開いていなければロックされていない）。
 /// <b>取れなければ待たずに止める</b>（待つ形は、以前のロック待ちのハングの原因になるので入れない）。
 /// </para>
 /// <para>
@@ -28,16 +29,20 @@ public static class ProjectLock
     /// <param name="dataDir">プロジェクトのルート（design_aid.db があるディレクトリ）</param>
     public static Handle? TryAcquire(string dataDir)
     {
-        var key = Path.GetFullPath(dataDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var key = Normalize(dataDir);
 
-        // 同じ流れで既に持っている（再入）
-        if (string.Equals(Held.Value, key, StringComparison.Ordinal))
+        // 同じ流れで既に持っている（再入）。パスは正規化して比べ、Windows では大文字小文字を区別しない
+        if (Held.Value != null && string.Equals(Held.Value, key, KeyComparison))
             return new Handle(null, key, reentrant: true);
 
         try
         {
+            // ファイルは置いたままにする（DeleteOnClose にしない）。FileShare.None で開いている間だけ保持する。
+            // 削除の最中に開く競合（Windows の UnauthorizedAccessException）と、Unix で解放と取得が重なって
+            // 別々の inode のファイルを同時に持つ隙がなくなる。
+            // UnauthorizedAccessException（権限・ディレクトリ）は busy にせず、原因のまま投げる
             var stream = new FileStream(Path.Combine(key, FileName), FileMode.OpenOrCreate,
-                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);
             var previous = Held.Value;
             Held.Value = key;
             return new Handle(stream, previous, reentrant: false);
@@ -47,6 +52,14 @@ public static class ProjectLock
             return null;
         }
     }
+
+    private static StringComparison KeyComparison
+        => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary>再入の判定に使うキー: フルパスにし、区切り文字をそろえ、末尾の区切りを除く。</summary>
+    private static string Normalize(string dataDir)
+        => Path.GetFullPath(dataDir).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+            .TrimEnd(Path.DirectorySeparatorChar);
 
     /// <summary>
     /// 例外が「別の誰かがロックファイルを持っている」ことを表すか。

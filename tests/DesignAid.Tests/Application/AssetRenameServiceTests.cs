@@ -553,6 +553,7 @@ public class AssetRenameServiceTests : IDisposable
         {
             var rel = Path.GetRelativePath(_root, f).Replace('\\', '/');
             if (rel.StartsWith("assets/") || rel.StartsWith("design_aid.db")) continue;
+            if (rel == DesignAid.Application.Services.ProjectLock.FileName) continue; // ロックファイルは置いたままにする
             map["ROOT:" + rel] = Convert.ToBase64String(File.ReadAllBytes(f));
         }
         return map;
@@ -1185,7 +1186,6 @@ public class AssetRenameServiceTests : IDisposable
 
         var r = await RenameAsync("old", "new");
         Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
-        Assert.False(File.Exists(lockPath)); // 閉じればロックファイルも残らない
     }
 
     [Fact]

@@ -79,25 +79,28 @@ public static class CommandHelper
     /// <see cref="EnsureDataDirectory"/> の直後に呼ぶ。取れなければ待たずに stderr へ出し、null を返す
     /// （呼び出し元は return すること）。EnsureDataDirectory で検証済みであること。
     /// </summary>
-    public static ProjectLock.Handle? AcquireProjectLock()
+    /// <param name="json">--json のとき、標準出力にも失敗の JSON を 1 つだけ出す（診断は stderr）</param>
+    public static ProjectLock.Handle? AcquireProjectLock(bool json = false)
     {
+        string? error = null;
         try
         {
             var handle = ProjectLock.TryAcquire(GetDataDirectory()!);
-            if (handle == null)
-            {
-                Console.Error.WriteLine("[ERROR] 別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。");
-                Console.Error.WriteLine("  終わってからやり直してください。");
-                Environment.ExitCode = 1;
-            }
-            return handle;
+            if (handle != null) return handle;
+            error = "別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。終わってからやり直してください。";
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"[ERROR] ロックを取得できませんでした: {ex.Message}");
-            Environment.ExitCode = 1;
-            return null;
+            error = $"ロックを取得できませんでした: {ex.Message}";
         }
+
+        Console.Error.WriteLine($"[ERROR] {error}");
+        if (json)
+        {
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { success = false, errors = new[] { error } }));
+        }
+        Environment.ExitCode = 1;
+        return null;
     }
 
     /// <summary>

@@ -354,8 +354,12 @@ public class AssetRenameService
                     // ロールバックしたときは行が変わっていないので、ここへは来ない
                     if (docRows.Count > 0)
                     {
-                        VectorSearchService.DeleteCacheFile(
-                            HnswIndexPath ?? Path.Combine(dataDir, "hnsw_index.bin"));
+                        var cachePath = HnswIndexPath ?? Path.Combine(dataDir, "hnsw_index.bin");
+                        if (!VectorSearchService.DeleteCacheFile(cachePath))
+                        {
+                            result.Warnings.Add(
+                                $"検索のキャッシュファイルを消せませんでした: {cachePath}。構築時の判定値が今の索引と一致しないので次の検索では使われませんが、手で消してください");
+                        }
                     }
                 }
                 catch

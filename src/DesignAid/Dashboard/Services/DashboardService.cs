@@ -278,6 +278,7 @@ public class DashboardService
         string? description,
         CancellationToken ct = default)
     {
+        using var projectLock = AcquireProjectLockOrThrow();
         await using var context = await _contextFactory.CreateDbContextAsync(ct);
 
         var asset = await context.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct);
@@ -297,6 +298,7 @@ public class DashboardService
         string? memo,
         CancellationToken ct = default)
     {
+        using var projectLock = AcquireProjectLockOrThrow();
         await using var context = await _contextFactory.CreateDbContextAsync(ct);
 
         var part = await context.Parts.FirstOrDefaultAsync(p => p.Id == partId, ct);
@@ -310,6 +312,15 @@ public class DashboardService
         await context.SaveChangesAsync(ct);
         return true;
     }
+
+    /// <summary>
+    /// プロジェクト共通のロックを取る。取れなければ（改名・sync などの実行中）待たずに例外にする。
+    /// 画面は例外のメッセージをそのままエラーとして出す。
+    /// </summary>
+    private static DesignAid.Application.Services.ProjectLock.Handle AcquireProjectLockOrThrow()
+        => DesignAid.Application.Services.ProjectLock.TryAcquire(DesignAid.Commands.CommandHelper.GetDataDirectory()!)
+           ?? throw new InvalidOperationException(
+               "別の変更が実行中です（改名・sync など）。終わってからやり直してください");
 
     private static string FormatPartType(PartType type) => type switch
     {

@@ -77,6 +77,26 @@ public class AssetRenamePlannerTests
         Assert.Null(AssetRenamePlanner.ValidateName(name));
     }
 
+    [Theory]
+    [InlineData("CON .txt")]
+    [InlineData("nul  .log")]
+    [InlineData("COM1 .a.b")]
+    public void ValidateName_予約名の末尾の空白を除いても予約名_拒否する(string name)
+    {
+        Assert.NotNull(AssetRenamePlanner.ValidateName(name));
+    }
+
+    [Fact]
+    public void ValidateNewName_NFDに分解した長さでも255バイトを超えない()
+    {
+        // é（NFC は 2 バイト、NFD は e + U+0301 の 3 バイト）。NFC だけで数えると 90 文字 = 180 バイトで通ってしまう
+        var nfc = new string('\u00E9', 90);
+        Assert.NotNull(AssetRenamePlanner.ValidateNewName(nfc));            // NFD で 270 バイト
+        Assert.Null(AssetRenamePlanner.ValidateNewName(new string('\u00E9', 85))); // NFD で 255 バイト
+        var nfd = string.Concat(Enumerable.Repeat("e\u0301", 90));           // 入力が NFD でも同じ結果
+        Assert.NotNull(AssetRenamePlanner.ValidateNewName(nfd));
+    }
+
     [Fact]
     public void ValidateNewName_UTF8で255バイトまで_境界()
     {

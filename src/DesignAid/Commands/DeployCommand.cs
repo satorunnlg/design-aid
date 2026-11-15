@@ -24,6 +24,8 @@ public class DeployCommand : Command
     private static void Execute(string? part, string? output, bool json, bool noConfirm, bool dryRun)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock(json);
+        if (projectLock == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
 
         if (!Directory.Exists(componentsDir))

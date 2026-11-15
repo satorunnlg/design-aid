@@ -79,6 +79,14 @@ public class SetupCommand : Command
                 }
             }
 
+            // 初期化も、同じプロジェクトへの他の変更と同時に走らせない
+            using var setupLock = DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir);
+            if (setupLock == null)
+            {
+                Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
+                return 1;
+            }
+
             // .gitignore の作成（DB ファイルを除外）
             var gitignorePath = Path.Combine(dataDir, ".gitignore");
             if (!File.Exists(gitignorePath) || force)
@@ -104,6 +112,9 @@ public class SetupCommand : Command
 
                     # ダッシュボード PID ファイル
                     .dashboard.pid
+
+                    # プロジェクト共通のロックファイル
+                    .daid.lock
                     """;
 
                 await File.WriteAllTextAsync(gitignorePath, gitignoreContent);

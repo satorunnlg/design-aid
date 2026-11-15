@@ -47,7 +47,8 @@ public static class AssetRenamePlanner
         }
 
         // CON.txt のように拡張子が付いても予約名になる
-        var stem = name.Split('.')[0];
+        // 拡張子の前の部分。末尾の空白とドットは Windows が無視するので除いて照らす（"CON .txt" も予約名）
+        var stem = name.Split('.')[0].TrimEnd(' ', '.');
         if (ReservedNames.Contains(stem))
             return $"'{name}' は OS の予約名のため使えません";
 
@@ -65,7 +66,11 @@ public static class AssetRenamePlanner
     {
         var error = ValidateName(name);
         if (error != null) return error;
-        if (System.Text.Encoding.UTF8.GetByteCount(name!) > MaxNameBytes)
+        // macOS（HFS+/APFS 互換）はファイル名を NFD に分解して保存するので、NFC と NFD の大きい方で数える
+        var bytes = Math.Max(
+            System.Text.Encoding.UTF8.GetByteCount(name!.Normalize(System.Text.NormalizationForm.FormC)),
+            System.Text.Encoding.UTF8.GetByteCount(name.Normalize(System.Text.NormalizationForm.FormD)));
+        if (bytes > MaxNameBytes)
             return $"装置名が長すぎます（UTF-8 で {MaxNameBytes} バイトまで。日本語は 1 文字 3 バイトです）";
         return null;
     }

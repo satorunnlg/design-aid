@@ -83,6 +83,15 @@ public class BackupCommand : Command
                 return 1;
             }
 
+            // バックアップは読み取りだが、改名などの途中の状態（フォルダと DB が食い違う瞬間）を取り込まないよう、
+            // プロジェクト共通のロックに参加する
+            using var backupLock = DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir);
+            if (backupLock == null)
+            {
+                Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
+                return 1;
+            }
+
             // DB から設定を読み込み
             var settings = CommandHelper.LoadSettings();
 

@@ -1116,19 +1116,35 @@ asset.json を作り直すため、DB に持たないと改名の履歴がその
 両方向でこの欄を運ぶ。`asset update` は record の `with` で書き換えるため欄が残る。
 
 **同時の実行の排他（プロジェクト共通ロック `ProjectLock`）:** design_aid.db と同じディレクトリの `.daid.lock` を
-`FileShare.None` + `DeleteOnClose` で開いたハンドルで持つ。**取れなければ待たずに止める**（待つ形は、以前のロック待ちの
-ハングの原因になるので入れない）。ハンドルで持つので、プロセスが落ちても残らない。同じ呼び出しの流れ（AsyncLocal）で
-既に持っているときは二重に取らず、何もしないハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない）。
-「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は EWOULDBLOCK の errno
-= 11 / 35）。場所が無い・容量不足などの IO エラーは busy にせず、元の原因のまま返す。
+`FileShare.None` で開いたハンドルで持つ。**ファイルは置いたままにする**（`DeleteOnClose` にしない。削除の最中に開いて
+`UnauthorizedAccessException` になる競合と、Unix で解放と取得が重なって別の inode のファイルを同時に持てる隙をなくすため。
+開いていなければロックされていない。`.gitignore` には `.daid.lock` を入れる。`daid setup` が作る `.gitignore` には入れてある）。
+**取れなければ待たずに止める**（待つ形は、以前のロック待ちのハングの原因になるので入れない）。ハンドルで持つので、
+プロセスが落ちてもロックは残らない。同じ呼び出しの流れ（AsyncLocal）で既に持っているときは二重に取らず、何もしない
+ハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない。再入の判定のキーはパスを正規化し、Windows では大文字小文字を
+区別しない）。「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は
+EWOULDBLOCK の errno = 11 / 35）。権限のエラー（`UnauthorizedAccessException`）や、場所が無い・容量不足などの IO エラーは
+busy にせず、元の原因のまま返す。`--json` のコマンド（`sync`・`deploy`・`asset rename`）は、取れないとき標準出力に失敗の
+JSON を 1 つだけ出す。
 
 装置の状態（フォルダ・asset.json・asset_links.json・DB の行・索引）を変える入口がこのロックに参加する:
-`sync`、`asset add / update / remove / rename / link / unlink`、`part link`、`archive asset`・`archive restore`、`restore`
-（復元先が既にあるとき）、MCP の `AddAsset` / `LinkPartToAsset` / `SyncAssets`。読み取りだけの入口（`asset list`・`asset bom`・
-`status`・`search` など）は参加しない。**範囲外（排他していないもの）:** `part add / update / remove`、`archive part`、
-`deploy`、`backup`（ロックファイルは複製しない）、ダッシュボードのインライン編集、`config set`、`setup`。
-これらは装置のフォルダ・asset.json・asset_links.json を書き換えない（または DB の別の表だけを触る）ためだが、
-装置の状態に触れる処理を足したら、ここに参加させること。
+`sync`、`setup`、`asset add / update / remove / rename / link / unlink`、`part add / update / remove / link`、
+`archive asset / part`・`archive restore`、`deploy`、`restore`（復元先が既にあるとき）、`backup`（読み取りだが、
+改名などの途中の状態を取り込まないため）、ダッシュボードの `UpdateAssetAsync` / `UpdatePartAsync`（取れなければ例外にして
+画面にエラーを出す）、MCP の `AddAsset` / `LinkPartToAsset` / `SyncAssets`。読み取りだけの入口（`asset list`・`asset bom`・
+`status`・`search` など）は参加しない。**対象外:** `config set`（Settings の表の設定値だけを書く。装置の状態ではない）、
+`dashboard`・`dashboard stop`（PID ファイルだけ）、`update`（ツール自体の更新）、`asset bom --export`（利用者が指定する出力先）。
+**入口の追加の漏れは、静的な検査（`ProjectLockCoverageTests`）が捕まえる:** Commands・`DashboardService`・MCP のツールの
+ソースを走査し、`SaveChanges`・`File.Write`・`Directory.Delete` などを呼ぶ入口が `AcquireProjectLock` / `ProjectLock` も
+呼ぶことを確かめる。例外は検査の中に理由付きで明示している。
+
+**検索キャッシュの古さの判定（`VectorSearchService`）:** VectorIndex の状態の判定値（件数・最大 Id・Id の合計・最後の
+`UpdatedAt`）を、グラフを作ったときに保持し、検索のたびに 1 本の集約クエリで今の状態と比べ、違えばメモリ上とディスク上の
+キャッシュを捨てて作り直す。ディスクのキャッシュには、構築時の判定値を横（`hnsw_index.bin.stamp`）に付け、読み込むとき
+**今読んだ行から作った判定値**と照らして、違えば使わない（判定値は行を読んだのと同じ結果から作るので、間に更新が入っても
+ずれない）。行の読み込みは `AsNoTracking` にする（長く生きる DbContext が追跡中の古い行を返すと、判定値が古いままになる）。
+`UpdatedAt` の列は既にあるので、マイグレーションは増やしていない。限界: 行の中身を `UpdatedAt` を進めずに書き換える処理は
+検知できない（従来からある限界）。
 
 **戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
 戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
