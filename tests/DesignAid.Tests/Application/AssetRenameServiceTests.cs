@@ -939,6 +939,131 @@ public class AssetRenameServiceTests : IDisposable
         Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
     }
 
+    // ---- Codex 3 周目の指摘への検査 ----
+
+    private async Task SetJsonIdAsync(string name, Guid id)
+    {
+        var dir = Path.Combine(_assetsDir, name);
+        var j = (await _json.ReadAsync(dir))!;
+        await _json.WriteAsync(dir, j with { Id = id });
+    }
+
+    [Theory]
+    [InlineData("db")]
+    [InlineData("json")]
+    public async Task Rename_asset_jsonのIDが別の装置のもの_何も変えずに止める(string owner)
+    {
+        await AddAssetAsync("old");
+        Guid otherId;
+        if (owner == "db")
+        {
+            otherId = await AddAssetAsync("other");
+            Directory.Delete(Path.Combine(_assetsDir, "other"), true); // DB の行だけが所有者
+        }
+        else
+        {
+            otherId = await AddAssetAsync("other", inDb: false);        // assets/ の別の asset.json が所有者
+        }
+        using (var db = NewDb())
+        {
+            db.VectorIndex.Add(VecRow(otherId, "other"));
+            await db.SaveChangesAsync();
+        }
+        await SetJsonIdAsync("old", otherId); // old の asset.json に other の ID をコピー
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("別の装置"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+        using var check = NewDb();
+        Assert.Equal("other", (await check.VectorIndex.AsNoTracking().SingleAsync()).AssetName);
+    }
+
+    [Fact]
+    public async Task Rename_どの装置にも属さない旧版のID食い違いは_通して両方のIDの索引を更新する()
+    {
+        var jsonId = await AddAssetAsync("old");
+        var dbId = Guid.NewGuid();
+        using (var db = NewDb())
+        {
+            // DB の行の ID を asset.json の ID と違うものにする（旧版の登録）
+            db.Assets.RemoveRange(db.Assets);
+            db.Assets.Add(Asset.Create("old", Path.Combine(_assetsDir, "old"), "old", "", dbId));
+            db.VectorIndex.AddRange(VecRow(jsonId, "old"), VecRow(dbId, "old", "spec"));
+            await db.SaveChangesAsync();
+        }
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        Assert.Equal(2, r.VectorRowsUpdated);
+    }
+
+    [Theory]
+    [InlineData("new")]
+    [InlineData("NEW")]
+    public async Task Rename_新名と同じ名前のアーカイブがある_DBに行が無くても何も変えずに止める(string archivedName)
+    {
+        await AddAssetAsync("old");
+        await WriteArchiveIndexAsync(archivedName);
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("同じ名前のアーカイブ"));
+        Assert.Equal(files, SnapshotRoot());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_別の名前のアーカイブは_改名を妨げない()
+    {
+        await AddAssetAsync("old");
+        await WriteArchiveIndexAsync("new-x", "other");
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    [Fact]
+    public async Task Rename_asset_jsonに履歴欄が無ければDBの履歴を引き継ぐ_a_b_のあとJSONを作り直してb_c()
+    {
+        await AddAssetAsync("a");
+        Assert.True((await RenameAsync("a", "b")).Success);
+        // asset.json を失い、asset add 相当（previous_names の無い asset.json）で作り直す。DB の履歴は [a]
+        var dir = Path.Combine(_assetsDir, "b");
+        File.Delete(Path.Combine(dir, "asset.json"));
+        var dbId = (await SnapshotDbAsync()).Single().Id;
+        await _json.CreateAsync(dir, dbId, "b", "b", "");
+
+        Assert.True((await RenameAsync("b", "c")).Success);
+
+        Assert.Equal(new[] { "a", "b" }, (await _json.ReadAsync(Path.Combine(_assetsDir, "c")))!.PreviousNames);
+        using var db = NewDb();
+        Assert.Equal(new[] { "a", "b" }, (await db.Assets.AsNoTracking().SingleAsync()).PreviousNames);
+    }
+
+    [Fact]
+    public async Task Rename_asset_jsonの履歴が明示的な空配列ならasset_jsonを正とする()
+    {
+        await AddAssetAsync("a");
+        Assert.True((await RenameAsync("a", "b")).Success);
+        var dir = Path.Combine(_assetsDir, "b");
+        var j = (await _json.ReadAsync(dir))!;
+        await _json.WriteAsync(dir, j with { PreviousNames = new List<string>() }); // DB は [a]、JSON は []
+
+        Assert.True((await RenameAsync("b", "c")).Success);
+
+        Assert.Equal(new[] { "b" }, (await _json.ReadAsync(Path.Combine(_assetsDir, "c")))!.PreviousNames);
+    }
+
     // ---- asset.json の往復（previous_names を落とさない）----
 
     [Fact]

@@ -89,6 +89,26 @@ public class AssetRenameService
         // アーカイブ（archive_index.json と archive/assets/*.zip）
         var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
         var archived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), oldName);
+        var newArchived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), newName);
+
+        // asset.json の ID が DB の ID と食い違うとき、その ID が別の装置のもの（DB の別の行・assets/ の別の asset.json）なら止める。
+        // どの装置にも属さない食い違い（旧版の登録）は通す
+        string? jsonIdOwner = null;
+        if (json != null && json.Id != dbAsset?.Id)
+        {
+            var ownerRow = await _db.Assets.AsNoTracking().FirstOrDefaultAsync(a => a.Id == json.Id && a.Name != oldName, ct);
+            if (ownerRow != null) jsonIdOwner = $"DB の装置 '{ownerRow.Name}'";
+            else if (Directory.Exists(assetsDir))
+            {
+                foreach (var d in Directory.GetDirectories(assetsDir))
+                {
+                    if (string.Equals(Path.GetFullPath(d), Path.GetFullPath(oldDir), StringComparison.OrdinalIgnoreCase)) continue;
+                    var other = _jsonReader.Exists(d) ? _jsonReader.Read(d) : null;
+                    if (other != null && other.Id == json.Id) { jsonIdOwner = $"assets/{Path.GetFileName(d)}"; break; }
+                }
+            }
+        }
+
         var (referencing, unreadableArchives) = FindArchivesReferencing(Path.Combine(dataDir, "archive", "assets"), oldName);
 
         // 新名と大小文字だけ違うもの（assets/ 直下のディレクトリ・ファイル）。大小文字を区別する環境で、別の装置を作ってしまわないため
@@ -112,7 +132,9 @@ public class AssetRenameService
             ArchivesReferencingOld: referencing,
             UnreadableArchives: unreadableArchives,
             OldAssetJsonName: json?.Name,
-            NewFsCaseCollisions: newCollisions);
+            NewFsCaseCollisions: newCollisions,
+            NewArchived: newArchived,
+            OldJsonIdOwner: jsonIdOwner);
 
         var errors = AssetRenamePlanner.CheckPreconditions(facts);
         if (errors.Count > 0)
@@ -131,7 +153,8 @@ public class AssetRenameService
         result.AssetId = json?.Id ?? dbAsset!.Id;
 
         // 「変更前の名前」は asset.json があればそれを土台にし、無ければ DB を土台にする
-        var basePrevious = json != null ? json.PreviousNames : dbAsset!.PreviousNames;
+        // asset.json に欄が無い（null）ときは DB の履歴を引き継ぐ。明示的な空の配列は asset.json を正とする
+        var basePrevious = AssetRenamePlanner.ChoosePreviousNamesBase(json != null, json?.PreviousNames, dbAsset?.PreviousNames);
         var previousNames = AssetRenamePlanner.UpdatePreviousNames(basePrevious, oldName, newName);
         result.PreviousNames = previousNames;
 

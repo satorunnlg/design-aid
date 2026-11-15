@@ -68,7 +68,17 @@ public static class AssetRenamePlanner
         IReadOnlyList<string>? ArchivesReferencingOld = null,
         IReadOnlyList<string>? UnreadableArchives = null,
         string? OldAssetJsonName = null,
-        IReadOnlyList<string>? NewFsCaseCollisions = null);
+        IReadOnlyList<string>? NewFsCaseCollisions = null,
+        bool NewArchived = false,
+        string? OldJsonIdOwner = null);
+
+    /// <summary>
+    /// 履歴の土台を決める。asset.json に <c>previous_names</c> の欄が無い（null）ときは DB の履歴を引き継ぎ、
+    /// 明示的な空の配列のときは asset.json を正とする（空として扱う）。asset.json が無ければ DB。
+    /// </summary>
+    public static IReadOnlyList<string>? ChoosePreviousNamesBase(
+        bool hasJson, IReadOnlyList<string>? jsonNames, IReadOnlyList<string>? dbNames)
+        => hasJson ? (jsonNames ?? dbNames) : dbNames;
 
     /// <summary>
     /// <paramref name="path"/> を正規化した親が <paramref name="assetsDir"/> と一致するか（assets 直下か）。
@@ -140,6 +150,12 @@ public static class AssetRenamePlanner
 
         if (f.NewFsCaseCollisions is { Count: > 0 })
             errors.Add($"新しい名前と大文字小文字だけが違うものが assets/ にあります: {string.Join(", ", f.NewFsCaseCollisions)}");
+
+        if (f.NewArchived)
+            errors.Add($"同じ名前のアーカイブがあります: {f.NewName}（アーカイブ済みの装置と名前が衝突するため改名できません）");
+
+        if (f.OldJsonIdOwner != null)
+            errors.Add($"asset.json の ID が別の装置のものです: {f.OldJsonIdOwner}（asset.json をコピーした可能性があります。確認してください）");
 
         if (f.UnreadableArchives is { Count: > 0 })
             errors.Add($"検査できないアーカイブがあります（子装置の参照を確認できないため改名できません）: {string.Join(", ", f.UnreadableArchives)}");

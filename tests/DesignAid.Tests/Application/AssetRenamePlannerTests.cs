@@ -232,6 +232,32 @@ public class AssetRenamePlannerTests
         Assert.Empty(AssetRenamePlanner.CheckPreconditions(Ok() with { NewFsCaseCollisions = Array.Empty<string>() }));
     }
 
+    [Fact]
+    public void CheckPreconditions_新名のアーカイブがある_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { NewArchived = true });
+        Assert.Single(errors);
+        Assert.Contains("同じ名前のアーカイブ", errors[0]);
+    }
+
+    [Fact]
+    public void CheckPreconditions_asset_jsonのIDが別の装置のもの_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { OldJsonIdOwner = "assets/other" });
+        Assert.Single(errors);
+        Assert.Contains("assets/other", errors[0]);
+    }
+
+    [Fact]
+    public void ChoosePreviousNamesBase_欄が無ければDB_空配列ならJSON_JSONが無ければDB()
+    {
+        var db = new[] { "a" };
+        Assert.Equal(db, AssetRenamePlanner.ChoosePreviousNamesBase(true, null, db));
+        Assert.Empty(AssetRenamePlanner.ChoosePreviousNamesBase(true, Array.Empty<string>(), db)!);
+        Assert.Equal(new[] { "j" }, AssetRenamePlanner.ChoosePreviousNamesBase(true, new[] { "j" }, db));
+        Assert.Equal(db, AssetRenamePlanner.ChoosePreviousNamesBase(false, null, db));
+    }
+
     // ---- UpdatePreviousNames ----
 
     [Fact]
