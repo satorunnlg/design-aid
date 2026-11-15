@@ -284,7 +284,7 @@ daid asset rename <old-name> <new-name> [options]
 4. **他の装置の `asset_links.json` にある子装置の参照**（`child_assets[].child_asset_name`）を新名へ書き換える
    （子装置は名前で参照されるため、書き換えないと `asset bom` / `asset list` から切れる）
 5. DB を 1 つのトランザクションで更新: `Assets` の `Name`・`DirectoryPath`・`DisplayName`・`PreviousNames`、
-   ベクトル索引（`VectorIndex`）のこの装置の行の装置名と文書のパス
+   ベクトル索引（`VectorIndex`）のこの装置の行: 文書チャンク（`asset_doc`）の行は**消し**（旧名から作られたキーを残さないため）、部品（`spec`）の行は装置名を更新
 
 途中で失敗したら、それまでの変更を**逆順に戻して**から失敗を報告する。
 Windows でフォルダが別のプロセスに開かれていて移動できないときは、何も変わっていない状態で止まり、原因を stderr に出す。
@@ -294,7 +294,7 @@ Windows でフォルダが別のプロセスに開かれていて移動できな
 **変えないもの:** git のリモート（名前・URL）。終わりに「リモートの名前・URL は変えていません」と表示する。
 必要なら `git remote` と GitHub 側で手動で変える。
 
-**改名後に再実行を勧めるもの:** ベクトル索引の行を更新した場合は `daid sync --include-vectors`
+**改名後に再実行を勧めるもの:** ベクトル索引の行を更新または削除した場合は `daid sync --include-vectors`
 （検索用の埋め込みのテキストに旧名が含まれているため。表示と絞り込みに使う装置名・パスは更新済み）。
 
 **DB だけ・asset.json だけの装置:** どちらか一方にしか無い装置も改名できる（無い側は触らず警告する）。

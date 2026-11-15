@@ -258,6 +258,23 @@ public class AssetRenamePlannerTests
         Assert.Equal(db, AssetRenamePlanner.ChoosePreviousNamesBase(false, null, db));
     }
 
+    [Fact]
+    public void CheckPreconditions_別フォルダのasset_jsonが新名を持つ_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { NewJsonNameOwners = new[] { "x" } });
+        Assert.Single(errors);
+        Assert.Contains("x", errors[0]);
+        Assert.Empty(AssetRenamePlanner.CheckPreconditions(Ok() with { NewJsonNameOwners = Array.Empty<string>() }));
+    }
+
+    [Fact]
+    public void CheckPreconditions_別の改名が実行中_止める()
+    {
+        var errors = AssetRenamePlanner.CheckPreconditions(Ok() with { RenameInProgress = true });
+        Assert.Single(errors);
+        Assert.Contains("別の改名が実行中", errors[0]);
+    }
+
     // ---- UpdatePreviousNames ----
 
     [Fact]
@@ -390,22 +407,4 @@ public class AssetRenamePlannerTests
         Assert.Null(json);
         Assert.Equal(0, count);
     }
-
-    // ---- RenameDocPartNumber / RenameDocFilePath ----
-
-    [Fact]
-    public void RenameDocPartNumber_接頭辞が旧名なら置き換える()
-        => Assert.Equal("[DOC] new/DESIGN.md", AssetRenamePlanner.RenameDocPartNumber("[DOC] old/DESIGN.md", "old", "new"));
-
-    [Fact]
-    public void RenameDocPartNumber_別の装置の文書は変えない()
-        => Assert.Equal("[DOC] old-x/DESIGN.md", AssetRenamePlanner.RenameDocPartNumber("[DOC] old-x/DESIGN.md", "old", "new"));
-
-    [Fact]
-    public void RenameDocFilePath_接頭辞が旧名なら置き換える()
-        => Assert.Equal("assets/new/DESIGN.md", AssetRenamePlanner.RenameDocFilePath("assets/old/DESIGN.md", "old", "new"));
-
-    [Fact]
-    public void RenameDocFilePath_別の装置のパスは変えない()
-        => Assert.Equal("assets/old-x/DESIGN.md", AssetRenamePlanner.RenameDocFilePath("assets/old-x/DESIGN.md", "old", "new"));
 }

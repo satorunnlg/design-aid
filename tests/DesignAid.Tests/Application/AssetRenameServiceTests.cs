@@ -262,12 +262,10 @@ public class AssetRenameServiceTests : IDisposable
         Assert.Equal(1, r.VectorRowsUpdated);
         using var check = NewDb();
         var rows = await check.VectorIndex.AsNoTracking().OrderBy(v => v.Id).ToListAsync();
-        Assert.Equal("new", rows[0].AssetName);
-        Assert.Equal("[DOC] new/DESIGN.md", rows[0].PartNumber);
-        Assert.Equal("assets/new/DESIGN.md", rows[0].FilePath);
-        // 別の装置の行は変えない
-        Assert.Equal("old-x", rows[1].AssetName);
-        Assert.Equal("[DOC] old-x/DESIGN.md", rows[1].PartNumber);
+        // 文書チャンクの行は消える（次の sync --include-vectors が新しい名前のキーで作り直す）。別の装置の行は変えない
+        var left = Assert.Single(rows);
+        Assert.Equal("old-x", left.AssetName);
+        Assert.Equal("[DOC] old-x/DESIGN.md", left.PartNumber);
     }
 
     [Fact]
@@ -665,12 +663,11 @@ public class AssetRenameServiceTests : IDisposable
         Assert.Equal(2, r.VectorRowsUpdated);
         using var check = NewDb();
         var rows = await check.VectorIndex.AsNoTracking().OrderBy(v => v.Id).ToListAsync();
+        Assert.Equal(2, rows.Count); // JSON の ID の文書行は消え、DB の ID の spec 行は残る
         Assert.Equal("new", rows[0].AssetName);
-        Assert.Equal("[DOC] new/DESIGN.md", rows[0].PartNumber);
-        Assert.Equal("assets/new/DESIGN.md", rows[0].FilePath);
-        Assert.Equal("new", rows[1].AssetName);
-        Assert.Equal("other", rows[2].AssetName);
-        Assert.Equal("[DOC] other/DESIGN.md", rows[2].PartNumber);
+        Assert.Equal("spec", rows[0].Type);
+        Assert.Equal("other", rows[1].AssetName);
+        Assert.Equal("[DOC] other/DESIGN.md", rows[1].PartNumber);
     }
 
     [Fact]
@@ -843,10 +840,7 @@ public class AssetRenameServiceTests : IDisposable
         using var check = NewDb();
         Assert.False(await check.Assets.AnyAsync()); // Assets の行は新しく作らない
         var rows = await check.VectorIndex.AsNoTracking().OrderBy(v => v.Id).ToListAsync();
-        Assert.Equal("new", rows[0].AssetName);
-        Assert.Equal("[DOC] new/DESIGN.md", rows[0].PartNumber);
-        Assert.Equal("assets/new/DESIGN.md", rows[0].FilePath);
-        Assert.Equal("other", rows[1].AssetName);
+        Assert.Equal("other", Assert.Single(rows).AssetName); // JSON の ID の文書行は消え、別の装置の行は残る
     }
 
     [Fact]
@@ -1062,6 +1056,149 @@ public class AssetRenameServiceTests : IDisposable
         Assert.True((await RenameAsync("b", "c")).Success);
 
         Assert.Equal(new[] { "b" }, (await _json.ReadAsync(Path.Combine(_assetsDir, "c")))!.PreviousNames);
+    }
+
+    // ---- Codex 4 周目の指摘への検査 ----
+
+    [Fact]
+    public async Task Rename_改名してアーカイブし名前を再利用した別装置の同期が_旧装置の文書行を上書きしない()
+    {
+        // A の文書を、実際の決定論的 ID（SyncCommand.DocChunkId）で索引化する
+        var idA = await AddAssetAsync("A");
+        var docKey = DesignAid.Commands.SyncCommand.DocChunkId("A", "DESIGN.md", 0);
+        using (var db = NewDb())
+        {
+            var row = VecRow(idA, "A");
+            row.PartId = docKey.ToString();
+            row.Content = "Aの旧い内容";
+            db.VectorIndex.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        // A → B に改名（再同期はしない）
+        Assert.True((await RenameAsync("A", "B")).Success);
+        using (var db = NewDb())
+        {
+            // B の文書行が、旧名から作られたキーのまま残っていない
+            Assert.False(await db.VectorIndex.AnyAsync(v => v.PartId == docKey.ToString()));
+        }
+
+        // B をアーカイブした状態で、新しい装置 A を作り、同名の文書を同期する（SyncVectorIndex と同じ UPSERT）
+        var newAId = Guid.NewGuid();
+        using (var db = NewDb())
+        using (var vs = new VectorSearchService(db, new DesignAid.Infrastructure.Embedding.MockEmbeddingProvider(8),
+                   Path.Combine(_root, "hnsw.bin")))
+        {
+            await vs.UpsertPartsAsync(new[]
+            {
+                new DesignKnowledgePoint
+                {
+                    Id = docKey, PartId = docKey, PartNumber = "[DOC] A/DESIGN.md", AssetId = newAId, AssetName = "A",
+                    Type = "asset_doc", Content = "新しい A の内容", FilePath = "assets/A/DESIGN.md"
+                }
+            });
+        }
+
+        using var check = NewDb();
+        var rows = await check.VectorIndex.AsNoTracking().ToListAsync();
+        var a = Assert.Single(rows); // 新しい行が 1 つだけ。B の行を上書きしていない
+        Assert.Equal(newAId.ToString(), a.AssetId);
+        Assert.Equal("新しい A の内容", a.Content);
+        Assert.DoesNotContain(rows, v => v.AssetId == idA.ToString());
+    }
+
+    [Fact]
+    public async Task Rename_部品のspec行は_消さずに装置名だけ更新する()
+    {
+        var id = await AddAssetAsync("old");
+        var partRowId = Guid.NewGuid().ToString();
+        using (var db = NewDb())
+        {
+            var row = VecRow(id, "old", "spec");
+            row.PartId = partRowId;
+            db.VectorIndex.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        Assert.True((await RenameAsync("old", "new")).Success);
+
+        using var check = NewDb();
+        var left = await check.VectorIndex.AsNoTracking().SingleAsync();
+        Assert.Equal(partRowId, left.PartId);
+        Assert.Equal("new", left.AssetName);
+    }
+
+    [Fact]
+    public async Task Rename_別フォルダのasset_jsonのnameが新名_何も変えずに止める()
+    {
+        await AddAssetAsync("old");
+        await AddAssetAsync("x", inDb: false);
+        var xDir = Path.Combine(_assetsDir, "x");
+        var xj = (await _json.ReadAsync(xDir))!;
+        await _json.WriteAsync(xDir, xj with { Name = "NEW" }); // フォルダ名と JSON 名が違う未同期の装置
+        var files = SnapshotFiles();
+        var dbRows = await SnapshotDbAsync();
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, e => e.Contains("asset.json の name") && e.Contains("x"));
+        Assert.Equal(files, SnapshotFiles());
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+    }
+
+    [Fact]
+    public async Task Rename_関係のない名前のasset_jsonは_改名を妨げない()
+    {
+        await AddAssetAsync("old");
+        await AddAssetAsync("x", inDb: false);
+        var xDir = Path.Combine(_assetsDir, "x");
+        var xj = (await _json.ReadAsync(xDir))!;
+        await _json.WriteAsync(xDir, xj with { Name = "new-x" });
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+    }
+
+    [Fact]
+    public async Task Rename_別の改名がロックを持っている間は止まり_解放された後は通る()
+    {
+        await AddAssetAsync("old");
+        var files = SnapshotRoot();
+        var dbRows = await SnapshotDbAsync();
+        var lockPath = Path.Combine(_root, AssetRenameService.LockFileName);
+
+        AssetRenameResult busy;
+        using (new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            busy = await RenameAsync("old", "new");
+        }
+
+        Assert.False(busy.Success);
+        Assert.Contains(busy.Errors, e => e.Contains("別の改名が実行中"));
+
+        File.Delete(lockPath);
+        Assert.Equal(files.Where(k => !k.Key.Contains(AssetRenameService.LockFileName)).ToDictionary(k => k.Key, k => k.Value),
+            SnapshotRoot().Where(k => !k.Key.Contains(AssetRenameService.LockFileName)).ToDictionary(k => k.Key, k => k.Value));
+        Assert.Equal(dbRows, await SnapshotDbAsync());
+
+        var r = await RenameAsync("old", "new");
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
+        Assert.False(File.Exists(lockPath)); // 閉じればロックファイルも残らない
+    }
+
+    [Fact]
+    public async Task Rename_失敗した後もロックは残らず_続けて改名できる()
+    {
+        await AddAssetAsync("old");
+        var failed = await RenameAsync("old", "new",
+            step => step == "after-json" ? throw new InvalidOperationException("注入した失敗") : Task.CompletedTask);
+        Assert.False(failed.Success);
+
+        var r = await RenameAsync("old", "new");
+
+        Assert.True(r.Success, string.Join(" / ", r.Errors) + r.Failure);
     }
 
     // ---- asset.json の往復（previous_names を落とさない）----

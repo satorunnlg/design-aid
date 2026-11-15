@@ -94,7 +94,7 @@ public class AssetRenameCommand : Command
             }
             if (result.VectorRowsUpdated > 0)
             {
-                Console.WriteLine($"  ベクトル索引: {result.VectorRowsUpdated} 行の装置名とパスを更新");
+                Console.WriteLine($"  ベクトル索引: {result.VectorRowsUpdated} 行を更新または削除（文書チャンクは消えるので再作成が要ります）");
             }
             foreach (var w in result.Warnings)
             {

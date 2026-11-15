@@ -47,6 +47,38 @@ public class AssetRenameService
     public async Task<AssetRenameResult> RenameAsync(
         string assetsDir, string oldName, string newName, CancellationToken ct = default)
     {
+        // プロジェクト単位のロック（design_aid.db と同じディレクトリのロックファイル）。
+        // 事前確認から戻しの完了までを排他する。取れなければ待たずに止める。
+        // 開いているハンドルで持つので、プロセスが落ちても残らない（OS が解放し、DeleteOnClose でファイルも消える）
+        var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
+        FileStream? lockStream;
+        try
+        {
+            lockStream = new FileStream(Path.Combine(dataDir, LockFileName), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+        }
+        catch (IOException)
+        {
+            var busy = new AssetRenameResult { OldName = oldName, NewName = newName };
+            busy.Errors.AddRange(AssetRenamePlanner.CheckPreconditions(BusyFacts(oldName, newName)));
+            return busy;
+        }
+
+        using (lockStream)
+        {
+            return await RenameLockedAsync(assetsDir, dataDir, oldName, newName, ct);
+        }
+    }
+
+    /// <summary>ロックファイル名（design_aid.db と同じディレクトリに置く）。</summary>
+    public const string LockFileName = ".daid-rename.lock";
+
+    private static AssetRenamePlanner.Facts BusyFacts(string oldName, string newName) => new(
+        oldName, newName, true, true, false, false, false, false, RenameInProgress: true);
+
+    private async Task<AssetRenameResult> RenameLockedAsync(
+        string assetsDir, string dataDir, string oldName, string newName, CancellationToken ct)
+    {
         var result = new AssetRenameResult { OldName = oldName, NewName = newName };
         var oldDir = Path.Combine(assetsDir, oldName);
         var newDir = Path.Combine(assetsDir, newName);
@@ -87,8 +119,20 @@ public class AssetRenameService
         variants = variants.Distinct(StringComparer.Ordinal).ToList();
 
         // アーカイブ（archive_index.json と archive/assets/*.zip）
-        var dataDir = Path.GetDirectoryName(Path.GetFullPath(assetsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
         var archived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), oldName);
+        // assets/ 直下の読める別の asset.json の name が新名（大小文字無視）なら、未同期の装置との衝突
+        var newJsonOwners = new List<string>();
+        if (Directory.Exists(assetsDir))
+        {
+            foreach (var d in Directory.GetDirectories(assetsDir))
+            {
+                if (string.Equals(Path.GetFullPath(d), Path.GetFullPath(oldDir), StringComparison.OrdinalIgnoreCase)) continue;
+                var other = _jsonReader.Exists(d) ? _jsonReader.Read(d) : null;
+                if (other != null && string.Equals(other.Name, newName, StringComparison.OrdinalIgnoreCase))
+                    newJsonOwners.Add(Path.GetFileName(d));
+            }
+        }
+
         var newArchived = await IsArchivedAsync(Path.Combine(dataDir, "archive_index.json"), newName);
 
         // asset.json の ID が DB の ID と食い違うとき、その ID が別の装置のもの（DB の別の行・assets/ の別の asset.json）なら止める。
@@ -134,7 +178,8 @@ public class AssetRenameService
             OldAssetJsonName: json?.Name,
             NewFsCaseCollisions: newCollisions,
             NewArchived: newArchived,
-            OldJsonIdOwner: jsonIdOwner);
+            OldJsonIdOwner: jsonIdOwner,
+            NewJsonNameOwners: newJsonOwners);
 
         var errors = AssetRenamePlanner.CheckPreconditions(facts);
         if (errors.Count > 0)
@@ -283,15 +328,15 @@ public class AssetRenameService
                     if (dbAsset != null) targetIds.Add(dbAsset.Id.ToString());
                     if (json != null && json.Id != dbAsset?.Id) targetIds.Add(json.Id.ToString());
                     var vectorRows = await _db.VectorIndex.Where(v => v.AssetId != null && targetIds.Contains(v.AssetId)).ToListAsync(ct);
-                    foreach (var v in vectorRows)
+                    // 文書チャンク（asset_doc）の行は<b>消す</b>。PartId が旧名から作られる（SyncCommand.DocChunkId）ため、
+                    // 書き換えて残すと、旧名を再利用した別の装置の同期が、この行を上書きしてしまう。
+                    // 次の sync --include-vectors が新しい名前のキーで作り直す。
+                    // 部品（spec）の行の PartId は部品の ID で、名前から作られないので、装置名だけを更新する
+                    var docRows = vectorRows.Where(v => v.Type == "asset_doc").ToList();
+                    _db.VectorIndex.RemoveRange(docRows);
+                    foreach (var v in vectorRows.Where(v => v.Type != "asset_doc"))
                     {
                         v.AssetName = newName;
-                        if (v.Type == "asset_doc")
-                        {
-                            v.PartNumber = AssetRenamePlanner.RenameDocPartNumber(v.PartNumber, oldName, newName);
-                            if (v.FilePath != null)
-                                v.FilePath = AssetRenamePlanner.RenameDocFilePath(v.FilePath, oldName, newName);
-                        }
                     }
                     result.VectorRowsUpdated = vectorRows.Count;
 

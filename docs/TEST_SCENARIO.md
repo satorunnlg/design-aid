@@ -683,7 +683,7 @@ daid part link RN-PART-001 --asset alpha --quantity 2
 # gamma が alpha を子装置として組み込む（asset_links.json に alpha が「名前で」書かれる）
 daid asset link gamma --child alpha --quantity 1 --notes "改名試験"
 
-# alpha に文書を置き、ベクトル索引に載せる（改名でベクトル索引の名前とパスが更新されることの確認用）
+# alpha に文書を置き、ベクトル索引に載せる（改名で文書チャンクの行が消え、再同期で新しい名前のキーで作り直されることの確認用）
 echo "# alpha の設計書" > assets/alpha/DESIGN.md
 daid sync --include-vectors
 #   sqlite3 design_aid.db "SELECT COUNT(*) FROM VectorIndex WHERE Type='asset_doc' AND AssetName='alpha';" が 1 以上
@@ -706,8 +706,7 @@ daid asset rename alpha alpha2
 # - assets/alpha2/asset.json の "name" が alpha2、"display_name" は「アルファ」のまま（旧名と違うので変えない）、
 #   "previous_names" が ["alpha"]
 # - DB の Assets: Name=alpha2、DirectoryPath が assets/alpha2、PreviousNames が ["alpha"]
-# - VectorIndex に AssetName='alpha' の行が残らない。alpha2 の asset_doc の行は
-#   PartNumber が "[DOC] alpha2/DESIGN.md"、FilePath が "assets/alpha2/DESIGN.md" になる
+# - VectorIndex に AssetName='alpha' の行が残らず、alpha の asset_doc の行は消えている（再同期で作り直す）
 ```
 
 ### 10c.3 引き継ぎの確認

@@ -687,7 +687,7 @@ public class SyncCommand : Command
                 for (int i = 0; i < chunks.Count; i++)
                 {
                     // 決定論的 GUID: asset名 + ファイルパス + チャンクインデックスから生成
-                    var deterministicId = GenerateDeterministicGuid($"{assetName}/{fileName}#{i}");
+                    var deterministicId = DocChunkId(assetName, fileName, i);
 
                     docPoints.Add(new DesignKnowledgePoint
                     {
@@ -757,6 +757,14 @@ public class SyncCommand : Command
     /// <summary>
     /// 文字列から決定論的な GUID を生成する（SHA256 ベース）。
     /// </summary>
+    /// <summary>
+    /// 文書チャンクの決定論的 ID。<b>装置名とファイル名から作られる</b>ため、装置を改名すると、
+    /// 旧名の行が、その名前を再利用した別の装置の行と同じ ID になりうる。
+    /// そのため <c>asset rename</c> は文書チャンクの行を書き換えず消す。
+    /// </summary>
+    public static Guid DocChunkId(string assetName, string fileName, int chunkIndex)
+        => GenerateDeterministicGuid($"{assetName}/{fileName}#{chunkIndex}");
+
     private static Guid GenerateDeterministicGuid(string input)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));

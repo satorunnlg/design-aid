@@ -1151,9 +1151,9 @@ asset.json の `name` だけを新名に直して `daid sync` してはいけな
 | 親子のリンク `AssetSubAssets` | ID | 引き継がれる（変更不要） |
 | 他の装置の `asset_links.json` の `child_assets[].child_asset_name` | **名前** | **同じ処理で書き換える**（`asset bom` / `asset list` / `sync` がこの名前でフォルダを引くため、書き換えないと切れる）。他の欄は落とさない（JsonNode で該当欄だけ置換） |
 | DB `Assets.DirectoryPath` | **絶対パス** | 同じトランザクションで更新 |
-| DB `VectorIndex` の `AssetName`・`PartNumber`（`[DOC] 名前/ファイル`）・`FilePath`（`assets/名前/ファイル`） | **名前・パス** | 同じトランザクションで、`AssetId` が一致する行だけ更新（別の装置・アーカイブ済みの同名の行は触らない） |
+| DB `VectorIndex` の `AssetName`（部品 spec の行）・文書チャンク（`Type=asset_doc`）の行 | **名前・パス** | 同じトランザクションで、`AssetId` が一致する行（DB の ID と asset.json の ID の両方）だけを対象にする。**文書チャンクの行は消す**（書き換えない）。部品（spec）の行は PartId が部品の ID で名前から作られないので、装置名だけ更新する（別の装置・アーカイブ済みの行は触らない） |
 | `VectorIndex.Embedding`（埋め込み）と HNSW キャッシュ | 名前を含むテキストから計算 | 直せない。**`daid sync --include-vectors` の再実行を勧める**（コマンドが表示する）。検索結果の表示・絞り込みは更新した DB の行を使うので、再実行までも壊れない |
-| `VectorIndex` の文書チャンクの決定論的 ID（`名前/ファイル#n` から生成） | 名前 | 直さない。次の `sync --include-vectors` が `AssetName` で旧行を消して作り直す |
+| `VectorIndex` の文書チャンクの決定論的 ID（`SyncCommand.DocChunkId`: `名前/ファイル#n` から生成） | 名前 | **行を消す**。書き換えて残すと、改名してアーカイブしたあと旧名を再利用した別の装置の同期が、PartId の一致でその行を上書きする（Codex 4 周目の指摘）。次の `sync --include-vectors` が新しい名前のキーで作り直す |
 | BOM（`asset bom`） | `asset_links.json` と `assets/<名前>/` | 上の `asset_links.json` の書き換えで足りる（BOM 自体は保存しない） |
 | ArtifactScanner | パーツのディレクトリを走査 | 装置名を持たない（影響なし） |
 | ダッシュボード・MCP の応答 | DB の `Assets` と `assets/<名前>/` を毎回引く | 保存しない（影響なし）。DB の更新後は新名・新パスで返る |

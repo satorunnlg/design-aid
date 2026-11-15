@@ -70,7 +70,9 @@ public static class AssetRenamePlanner
         string? OldAssetJsonName = null,
         IReadOnlyList<string>? NewFsCaseCollisions = null,
         bool NewArchived = false,
-        string? OldJsonIdOwner = null);
+        string? OldJsonIdOwner = null,
+        IReadOnlyList<string>? NewJsonNameOwners = null,
+        bool RenameInProgress = false);
 
     /// <summary>
     /// 履歴の土台を決める。asset.json に <c>previous_names</c> の欄が無い（null）ときは DB の履歴を引き継ぎ、
@@ -101,6 +103,12 @@ public static class AssetRenamePlanner
     public static IReadOnlyList<string> CheckPreconditions(Facts f)
     {
         var errors = new List<string>();
+
+        if (f.RenameInProgress)
+        {
+            errors.Add("別の改名が実行中です（同じプロジェクトでは同時に 1 つしか改名できません）。終わってからやり直してください");
+            return errors;
+        }
 
         // 旧名も単一のディレクトリ名に限る（絶対パスや .. で assets の外を指させない）
         var oldNameError = ValidateName(f.OldName);
@@ -150,6 +158,9 @@ public static class AssetRenamePlanner
 
         if (f.NewFsCaseCollisions is { Count: > 0 })
             errors.Add($"新しい名前と大文字小文字だけが違うものが assets/ にあります: {string.Join(", ", f.NewFsCaseCollisions)}");
+
+        if (f.NewJsonNameOwners is { Count: > 0 })
+            errors.Add($"新しい名前を asset.json の name に持つ別のフォルダがあります: {string.Join(", ", f.NewJsonNameOwners)}（未同期の装置と名前が衝突します）");
 
         if (f.NewArchived)
             errors.Add($"同じ名前のアーカイブがあります: {f.NewName}（アーカイブ済みの装置と名前が衝突するため改名できません）");
@@ -250,29 +261,5 @@ public static class AssetRenamePlanner
 
         // asset link / part link が書くときと同じ形（インデントあり・既定のエスケープ）に揃える
         return (obj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), count);
-    }
-
-    /// <summary>
-    /// ベクトル索引の文書チャンクの表示名 <c>[DOC] 旧名/ファイル</c> を新名へ置き換える。
-    /// 該当しなければそのまま返す。
-    /// </summary>
-    public static string RenameDocPartNumber(string partNumber, string oldName, string newName)
-    {
-        var prefix = $"[DOC] {oldName}/";
-        return partNumber.StartsWith(prefix, StringComparison.Ordinal)
-            ? $"[DOC] {newName}/" + partNumber[prefix.Length..]
-            : partNumber;
-    }
-
-    /// <summary>
-    /// ベクトル索引の文書チャンクのファイルパス <c>assets/旧名/ファイル</c> を新名へ置き換える。
-    /// 該当しなければそのまま返す。
-    /// </summary>
-    public static string RenameDocFilePath(string filePath, string oldName, string newName)
-    {
-        var prefix = $"assets/{oldName}/";
-        return filePath.StartsWith(prefix, StringComparison.Ordinal)
-            ? $"assets/{newName}/" + filePath[prefix.Length..]
-            : filePath;
     }
 }
