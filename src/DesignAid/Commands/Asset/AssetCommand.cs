@@ -13,6 +13,7 @@ public class AssetCommand : Command
         this.Add(new AssetListCommand());
         this.Add(new AssetRemoveCommand());
         this.Add(new AssetUpdateCommand());
+        this.Add(new AssetRenameCommand());
         this.Add(new AssetLinkCommand());
         this.Add(new AssetUnlinkCommand());
         this.Add(new AssetBomCommand());

@@ -24,6 +24,8 @@ public class ArchiveAssetCommand : Command
     private static async Task ExecuteAsync(string? name, bool allDormant, string? list, bool yes)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
 
         // 引数バリデーション
         var modes = new[] { name != null, allDormant, list != null };

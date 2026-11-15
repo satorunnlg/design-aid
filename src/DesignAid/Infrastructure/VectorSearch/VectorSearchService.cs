@@ -16,6 +16,72 @@ public class VectorSearchService : IDisposable
     private readonly string _hnswIndexPath;
     private SmallWorld<float[], float>? _hnswIndex;
     private List<(int HnswId, int VectorIndexId)>? _idMapping;
+
+    /// <summary>
+    /// メモリ上のグラフを作ったときの VectorIndex の状態（件数・最大 Id・Id の合計）。
+    /// 別のインスタンス・別のプロセス（asset rename など）が行を消したり足したりすると変わる。
+    /// 検索のたびに現在の状態と比べ、違えばメモリ上とディスク上のキャッシュを捨てて作り直す。
+    /// </summary>
+    private Stamp? _loadedStamp;
+
+    /// <summary>VectorIndex の状態の判定値（件数・最大 Id・Id の合計・最後の更新時刻）。</summary>
+    private readonly record struct Stamp(int Count, int MaxId, long SumId, long MaxUpdatedTicks)
+    {
+        /// <summary>キャッシュファイルの横に保存する形。</summary>
+        public string ToText() => $"{Count}|{MaxId}|{SumId}|{MaxUpdatedTicks}";
+    }
+
+    /// <summary>
+    /// 読み込んだ行そのものから判定値を作る。<b>グラフを作る・読むときは、行を読んだのと同じ結果から</b>作るので、
+    /// 読んだ行と判定値がずれない（別の処理が間に更新しても、古い判定値で新しいグラフを作ったと誤解しない）。
+    /// </summary>
+    private static Stamp StampOf(List<VectorIndexEntry> entries)
+        => entries.Count == 0
+            ? default
+            : new Stamp(entries.Count, entries.Max(e => e.Id), entries.Sum(e => (long)e.Id),
+                entries.Max(e => e.UpdatedAt).Ticks);
+
+    /// <summary>
+    /// 旧形式の判定値ファイル（<c>.stamp</c>）の場所。現在は判定値を bin のヘッダーに入れているので使わない。
+    /// 残っていれば消す。
+    /// </summary>
+    private string LegacyStampFilePath => _hnswIndexPath + ".stamp";
+
+    /// <summary>キャッシュ（bin）の先頭に付けるヘッダーの識別子。ヘッダーの無い旧形式の bin は「一致しない」として作り直す。</summary>
+    private const string CacheMagic = "DAIDHNSW1";
+
+    /// <summary>
+    /// キャッシュを開き、ヘッダーの判定値が <paramref name="expected"/> と一致するときだけ、
+    /// グラフの先頭に位置を合わせたストリームを返す。<b>開けない・読めない・ヘッダーが無い・不一致は、すべて null</b>
+    /// （別のプロセスが消したり書いたりしている最中でも、例外にしない）。
+    /// </summary>
+    private FileStream? TryOpenCache(string expected)
+    {
+        FileStream? fs = null;
+        try
+        {
+            fs = new FileStream(_hnswIndexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var buf = new List<byte>();
+            int b;
+            while (buf.Count < 256 && (b = fs.ReadByte()) >= 0)
+            {
+                if (b == '\n')
+                {
+                    var header = System.Text.Encoding.UTF8.GetString(buf.ToArray());
+                    if (header == $"{CacheMagic}|{expected}") return fs;
+                    break;
+                }
+                buf.Add((byte)b);
+            }
+            fs.Dispose();
+            return null;
+        }
+        catch
+        {
+            fs?.Dispose();
+            return null;
+        }
+    }
     private bool _disposed;
 
     /// <summary>
@@ -172,6 +238,12 @@ public class VectorSearchService : IDisposable
             return new List<SearchResult>();
         }
 
+        // 他の処理が行を消したり足したりしていたら、古いグラフを使い続けない
+        if (_hnswIndex != null && _loadedStamp != await ComputeStampAsync(ct))
+        {
+            InvalidateIndex();
+        }
+
         // HNSW インデックスを構築（未構築の場合）
         await EnsureIndexLoadedAsync(ct);
 
@@ -244,12 +316,13 @@ public class VectorSearchService : IDisposable
     /// </summary>
     public async Task RebuildIndexAsync(CancellationToken ct = default)
     {
-        var entries = await _context.VectorIndex.ToListAsync(ct);
+        var entries = await _context.VectorIndex.AsNoTracking().ToListAsync(ct);
 
         if (entries.Count == 0)
         {
             _hnswIndex = null;
             _idMapping = null;
+            _loadedStamp = null;
             DeleteIndexFile();
             return;
         }
@@ -279,8 +352,44 @@ public class VectorSearchService : IDisposable
             _idMapping.Add((hnswIds[i], entries[i].Id));
         }
 
-        // グラフをファイルに保存
-        await SerializeIndexAsync(vectors);
+        var stamp = StampOf(entries);
+        _loadedStamp = stamp;
+
+        // グラフをファイルに保存（判定値を横に付ける）
+        await SerializeIndexAsync(vectors, stamp);
+    }
+
+    /// <summary>VectorIndex の現在の状態の判定値。</summary>
+    private async Task<Stamp> ComputeStampAsync(CancellationToken ct)
+    {
+        // 1 本の集約で、件数・最大 Id・Id の合計・最後の更新時刻を取る
+        var agg = await _context.VectorIndex
+            .GroupBy(_ => 1)
+            .Select(g => new { C = g.Count(), M = g.Max(v => v.Id), S = g.Sum(v => (long)v.Id), U = g.Max(v => v.UpdatedAt) })
+            .FirstOrDefaultAsync(ct);
+        return agg == null ? default : new Stamp(agg.C, agg.M, agg.S, agg.U.Ticks);
+    }
+
+    /// <summary>
+    /// ディスク上の HNSW キャッシュを消す。行を消した別の処理（asset rename など）が、
+    /// 古いグラフを次の検索で読み込ませないために呼ぶ。消せなくても例外にしない。
+    /// </summary>
+    /// <returns>消せたら（または無ければ）true。消せなかったら false（呼び出し側が警告に出す）</returns>
+    public static bool DeleteCacheFile(string hnswIndexPath)
+    {
+        var ok = true;
+        foreach (var path in new[] { hnswIndexPath, hnswIndexPath + ".stamp" })
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch
+            {
+                ok = false;
+            }
+        }
+        return ok;
     }
 
     /// <summary>
@@ -314,6 +423,7 @@ public class VectorSearchService : IDisposable
 
         _hnswIndex = null;
         _idMapping = null;
+        _loadedStamp = null;
         DeleteIndexFile();
     }
 
@@ -327,7 +437,7 @@ public class VectorSearchService : IDisposable
             return;
         }
 
-        var entries = await _context.VectorIndex.ToListAsync(ct);
+        var entries = await _context.VectorIndex.AsNoTracking().ToListAsync(ct);
         if (entries.Count == 0)
         {
             return;
@@ -335,12 +445,18 @@ public class VectorSearchService : IDisposable
 
         var vectors = entries.Select(e => Normalize(FromBlob(e.Embedding))).ToList();
 
-        // キャッシュファイルからの復元を試みる
-        if (File.Exists(_hnswIndexPath))
+        // キャッシュファイルからの復元を試みる。ただし、構築したときの判定値が、今読んだ行の判定値と
+        // 一致するときだけ（件数が同じでも行が入れ替わったキャッシュを、取り違えて使わない）
+        var entriesStamp = StampOf(entries);
+        // 読み取りはすべて TryOpenCache の中で守る（別のプロセスが消したり書いたりしていても、検索を落とさない）
+        // ストリームは、読み終えたら（失敗したときも）再構築の前に閉じる。開いたままだと、再構築が bin を
+        // 置き換えられず（Windows）、キャッシュが二度と直らない
+        var cacheStream = TryOpenCache(entriesStamp.ToText());
+        if (cacheStream != null)
         {
             try
             {
-                using var stream = File.OpenRead(_hnswIndexPath);
+                using var stream = cacheStream;
                 var deserialized = SmallWorld<float[], float>.DeserializeGraph(
                     vectors,
                     CosineDistance.SIMDForUnits,
@@ -355,6 +471,7 @@ public class VectorSearchService : IDisposable
                 {
                     _idMapping.Add((i, entries[i].Id));
                 }
+                _loadedStamp = entriesStamp;
                 return;
             }
             catch
@@ -370,7 +487,7 @@ public class VectorSearchService : IDisposable
     /// <summary>
     /// HNSW グラフをファイルにシリアライズする。
     /// </summary>
-    private async Task SerializeIndexAsync(List<float[]> vectors)
+    private async Task SerializeIndexAsync(List<float[]> vectors, Stamp stamp)
     {
         if (_hnswIndex == null) return;
 
@@ -382,13 +499,104 @@ public class VectorSearchService : IDisposable
                 Directory.CreateDirectory(directory);
             }
 
-            using var stream = File.Create(_hnswIndexPath);
-            _hnswIndex.SerializeGraph(stream);
-            await stream.FlushAsync();
+            DeleteStaleTempFiles();
+
+            // 新しい形式の bin を書く<b>前に</b>、旧形式の判定値ファイル（.stamp）を消す。旧版の daid が、
+            // 残った .stamp と、新しい形式の bin（先頭にヘッダーがある）を組み合わせて、壊れた bin を読まないようにするため。
+            // 消せなければ（開かれているなど）、bin は書かない（次回の検索で作り直す）
+            if (!TryRemoveLegacyStamp(LegacyStampFilePath, out var stampError))
+            {
+                Console.Error.WriteLine($"[WARN] 旧形式の判定値ファイル（{LegacyStampFilePath}）を消せないため、検索のキャッシュを書きません（次回の検索で作り直します）: {stampError}");
+                return;
+            }
+
+            // 判定値をヘッダーに入れて 1 つのファイルにし、一時の名前で書いてから置き換える（原子的）。
+            // 読む側は、途中まで書かれたファイルや、判定値だけ新しいファイルを見ない
+            var tmp = _hnswIndexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var stream = File.Create(tmp))
+                {
+                    var header = System.Text.Encoding.UTF8.GetBytes($"{CacheMagic}|{stamp.ToText()}\n");
+                    stream.Write(header, 0, header.Length);
+                    _hnswIndex.SerializeGraph(stream);
+                    await stream.FlushAsync();
+                }
+                try
+                {
+                    File.Move(tmp, _hnswIndexPath, overwrite: true);
+                }
+                catch (IOException)
+                {
+                    // 置き換えに失敗したら、古い bin を消してからもう一度。それでも失敗したら警告を記録する
+                    try
+                    {
+                        File.Delete(_hnswIndexPath);
+                        File.Move(tmp, _hnswIndexPath, overwrite: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[WARN] 検索のキャッシュを置き換えられませんでした（次回の検索で作り直します）: {ex.Message}");
+                    }
+                }
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            }
+            try { if (File.Exists(LegacyStampFilePath)) File.Delete(LegacyStampFilePath); } catch { }
         }
         catch
         {
             // シリアライズ失敗は致命的ではない（次回再構築する）
+        }
+    }
+
+    /// <summary>
+    /// 旧形式の判定値ファイル（.stamp）を消す。無ければ成功。消せなかった（開かれている・権限がない）ときは false を返す。
+    /// </summary>
+    public static bool TryRemoveLegacyStamp(string stampPath, out string? error)
+    {
+        error = null;
+        try
+        {
+            if (File.Exists(stampPath)) File.Delete(stampPath);
+            if (!File.Exists(stampPath)) return true;
+            error = "削除したのに残っています";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 強制終了などで残った書き込み途中の一時ファイル（<c>hnsw_index.bin.*.tmp</c>）のうち、
+    /// 1 日以上前のものだけを消す（書いている最中のものは消さない）。
+    /// </summary>
+    private void DeleteStaleTempFiles()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(_hnswIndexPath));
+            if (dir == null || !Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, Path.GetFileName(_hnswIndexPath) + ".*.tmp"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(f) < DateTime.UtcNow.AddDays(-1)) File.Delete(f);
+                }
+                catch
+                {
+                    // 消せなければ次回
+                }
+            }
+        }
+        catch
+        {
+            // 掃除の失敗は書き込みを妨げない
         }
     }
 
@@ -399,6 +607,7 @@ public class VectorSearchService : IDisposable
     {
         _hnswIndex = null;
         _idMapping = null;
+        _loadedStamp = null;
         DeleteIndexFile();
     }
 
@@ -412,6 +621,10 @@ public class VectorSearchService : IDisposable
             if (File.Exists(_hnswIndexPath))
             {
                 File.Delete(_hnswIndexPath);
+            }
+            if (File.Exists(LegacyStampFilePath))
+            {
+                File.Delete(LegacyStampFilePath);
             }
         }
         catch

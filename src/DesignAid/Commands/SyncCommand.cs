@@ -28,40 +28,53 @@ public class SyncCommand : Command
         this.Add(new Option<bool>("--skip-db", "DB同期をスキップ"));
         this.Add(new Option<bool>("--restore-json", "DB に行があるのに asset.json が無い装置を、DB の内容から復元する"));
 
-        this.Handler = CommandHandler.Create<bool, bool, bool, bool, bool, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool, bool, bool, bool, bool, bool>(Execute));
     }
 
     private static void Execute(bool dryRun, bool includeVectors, bool force, bool json, bool skipDb, bool restoreJson)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock(json);
+        if (projectLock == null) return;
+
+        // --json の有無で行う処理は同じにする。違うのは出力の形だけ:
+        // 人向けの出力は --json のとき stderr へ流し、結果は最後に JSON 1 つとして標準出力へ出す（#10）
+        var report = new SyncReport();
+        using (CommandHelper.HumanOutput(json))
+        {
+            RunSync(dryRun, includeVectors, force, skipDb, restoreJson, report);
+        }
+
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(report.ToJsonObject(dryRun), new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        // 同期の段階が失敗したら、--json の有無にかかわらず終了コードを 0 以外にする（success=false なのに 0 を返さない）
+        if (report.Failed) Environment.ExitCode = SyncFailureExitCode;
+    }
+
+    /// <summary>同期の段階（DB 同期・復元・ベクトル同期）が失敗したときの終了コード。</summary>
+    public const int SyncFailureExitCode = 1;
+
+    /// <summary>同期の本体。進捗は Console に書き（--json のときは呼び出し側が stderr へ向けている）、結果を <paramref name="report"/> に溜める。</summary>
+    private static void RunSync(bool dryRun, bool includeVectors, bool force, bool skipDb, bool restoreJson, SyncReport report)
+    {
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var assetsDir = CommandHelper.GetAssetsDirectory();
 
         if (!Directory.Exists(componentsDir))
         {
-            if (json)
-            {
-                Console.WriteLine(JsonSerializer.Serialize(new
-                {
-                    success = true,
-                    changes = Array.Empty<object>(),
-                    assetJsonGaps = skipDb ? Array.Empty<object>() : FindAssetJsonGaps(assetsDir)
-                        .Select(g => new { name = g.Name, id = g.Id, path = g.DirectoryPath }).ToArray()
-                }));
-            }
-            else
-            {
-                Console.WriteLine("同期対象のパーツがありません");
-            }
+            Console.WriteLine("同期対象のパーツがありません");
 
             // パーツがなくてもアセットの DB 同期は実行する
             if (!skipDb && !dryRun)
             {
-                SyncToDatabase(assetsDir, null, new PartJsonReader());
+                report.Database = SyncToDatabase(assetsDir, null, new PartJsonReader());
             }
-            if (!skipDb && !json)
+            if (!skipDb)
             {
-                ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
+                report.Gaps = ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
             }
             return;
         }
@@ -70,11 +83,8 @@ public class SyncCommand : Command
         var partJsonReader = new PartJsonReader();
         var changes = new List<SyncChange>();
 
-        if (!json)
-        {
-            Console.WriteLine("Syncing design data...");
-            Console.WriteLine();
-        }
+        Console.WriteLine("Syncing design data...");
+        Console.WriteLine();
 
         foreach (var partDir in Directory.GetDirectories(componentsDir))
         {
@@ -188,44 +198,14 @@ public class SyncCommand : Command
             changes.Add(change);
         }
 
-        if (json)
+        report.Changes = changes;
+
+        if (changes.Count == 0)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                success = true,
-                dryRun,
-                changes,
-                assetJsonGaps = skipDb ? Array.Empty<object>() : FindAssetJsonGaps(assetsDir)
-                    .Select(g => new { name = g.Name, id = g.Id, path = g.DirectoryPath }).ToArray()
-            }, new JsonSerializerOptions { WriteIndented = true }));
+            Console.WriteLine("変更はありません");
         }
         else
         {
-            if (changes.Count == 0)
-            {
-                Console.WriteLine("変更はありません");
-
-                // DB 同期（ファイル変更がなくても実行）
-                if (!skipDb && !dryRun)
-                {
-                    Console.WriteLine();
-                    SyncToDatabase(assetsDir, componentsDir, partJsonReader);
-                }
-
-                if (!skipDb)
-                {
-                    ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
-                }
-
-                // ファイル変更がなくてもベクトルインデックス同期は実行する
-                if (includeVectors && !dryRun)
-                {
-                    Console.WriteLine();
-                    SyncVectorIndex(componentsDir, assetsDir, partJsonReader);
-                }
-                return;
-            }
-
             foreach (var change in changes)
             {
                 var prefix = change.Action switch
@@ -275,45 +255,109 @@ public class SyncCommand : Command
             {
                 Console.WriteLine("(dry-run モードのため、実際の変更は行われていません)");
             }
+        }
 
-            // DB 同期
-            if (!skipDb && !dryRun)
-            {
-                Console.WriteLine();
-                SyncToDatabase(assetsDir, componentsDir, partJsonReader);
-            }
+        // DB 同期（ファイル変更がなくても実行）
+        if (!skipDb && !dryRun)
+        {
+            Console.WriteLine();
+            report.Database = SyncToDatabase(assetsDir, componentsDir, partJsonReader);
+        }
 
-            if (!skipDb)
-            {
-                ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
-            }
+        if (!skipDb)
+        {
+            report.Gaps = ReportAssetJsonGaps(assetsDir, restoreJson, dryRun);
+        }
 
-            if (includeVectors && !dryRun)
-            {
-                Console.WriteLine();
-                SyncVectorIndex(componentsDir, assetsDir, partJsonReader);
-            }
-            else if (includeVectors && dryRun)
+        // ファイル変更がなくてもベクトルインデックス同期は実行する
+        if (includeVectors && !dryRun)
+        {
+            Console.WriteLine();
+            report.Vectors = SyncVectorIndex(componentsDir, assetsDir, partJsonReader);
+        }
+        else if (includeVectors && dryRun)
+        {
+            if (changes.Count > 0)
             {
                 Console.WriteLine();
                 Console.WriteLine("[INFO] dry-run モードのためベクトルインデックスへの同期はスキップされました");
             }
+            report.Vectors = new VectorSyncResult("skipped", "dry-run モードのためスキップ");
+        }
+    }
+
+    /// <summary>DB 同期の結果。</summary>
+    /// <remarks>
+    /// Assets / Parts / Links は<b>確定した（SaveChanges が済んだ）段階</b>の件数。失敗した段階で登録しようとしていた分
+    /// （DB には入っていない）は Uncommitted* に分けて報告する。
+    /// </remarks>
+    private sealed record DbSyncResult(int Assets, int Parts, int Links, string? Error,
+        int UncommittedAssets = 0, int UncommittedParts = 0, int UncommittedLinks = 0);
+
+    /// <summary>asset.json の欠落の検査と復元の結果。</summary>
+    /// <remarks>Errors は復元の失敗（個々の装置の書き込み失敗と、復元の処理全体の失敗）。1 件でもあれば sync の失敗。</remarks>
+    private sealed record GapReport(IReadOnlyList<AssetJsonGap> Gaps, bool RestoreRequested, int? Restored,
+        IReadOnlyList<string> Errors);
+
+    /// <summary>ベクトルインデックス同期の結果。Status: synced / nothing / disabled / skipped / error</summary>
+    private sealed record VectorSyncResult(string Status, string Message);
+
+    /// <summary>sync 全体の結果（--json の出力の材料。人向けの出力と同じ処理から溜める）。</summary>
+    private sealed class SyncReport
+    {
+        public List<SyncChange> Changes { get; set; } = new();
+        public DbSyncResult? Database { get; set; }
+        public GapReport? Gaps { get; set; }
+        public VectorSyncResult? Vectors { get; set; }
+
+        /// <summary>
+        /// 失敗か（JSON の success と終了コードの共通の判定）。同期の各段階の失敗だけが失敗で、
+        /// 警告（asset.json の欠落の検査の失敗）と正常なスキップ（disabled・nothing・dry-run の skipped）は失敗にしない。
+        /// </summary>
+        public bool Failed => Database?.Error != null
+            || (Gaps?.Errors.Count ?? 0) > 0
+            || Vectors?.Status == "error";
+
+        public object ToJsonObject(bool dryRun)
+        {
+            return new
+            {
+                success = !Failed,
+                dryRun,
+                changes = Changes,
+                database = Database == null ? null : new
+                {
+                    assets = Database.Assets,
+                    parts = Database.Parts,
+                    links = Database.Links,
+                    error = Database.Error,
+                    uncommitted = new { assets = Database.UncommittedAssets, parts = Database.UncommittedParts, links = Database.UncommittedLinks },
+                },
+                assetJsonGaps = (Gaps?.Gaps ?? Array.Empty<AssetJsonGap>())
+                    .Select(g => new { name = g.Name, id = g.Id, path = g.DirectoryPath }).ToArray(),
+                assetJsonRestored = Gaps?.Restored,
+                assetJsonRestoreErrors = Gaps?.Errors ?? Array.Empty<string>(),
+                vectorIndex = Vectors == null ? null : new { status = Vectors.Status, message = Vectors.Message },
+            };
         }
     }
 
     /// <summary>
     /// ファイルシステムの asset.json / part.json / asset_links.json を DB に UPSERT する。
     /// </summary>
-    private static void SyncToDatabase(string assetsDir, string? componentsDir, PartJsonReader partJsonReader)
+    private static DbSyncResult SyncToDatabase(string assetsDir, string? componentsDir, PartJsonReader partJsonReader)
     {
         Console.WriteLine("Syncing to database...");
+
+        int assetCount = 0, partCount = 0, linkCount = 0;
+        int pendingAssets = 0, pendingParts = 0, pendingLinks = 0;
 
         try
         {
             using var db = CommandHelper.CreateDbContext();
             var assetJsonReader = new AssetJsonReader();
 
-            int assetCount = 0, partCount = 0, linkCount = 0;
+            // assetCount 等は確定した（SaveChanges が済んだ）件数、pending* は未確定の件数（途中で失敗したとき、DB の実態と報告を合わせる）
 
             // 1. Assets の UPSERT
             if (Directory.Exists(assetsDir))
@@ -324,39 +368,17 @@ public class SyncCommand : Command
                     var assetJson = assetJsonReader.Read(assetDir);
                     if (assetJson == null) continue;
 
-                    var dbAsset = db.Assets.FirstOrDefault(a => a.Name == assetJson.Name);
-                    if (dbAsset == null)
+                    var existing = db.Assets.FirstOrDefault(a => a.Name == assetJson.Name);
+                    // asset.json → DB の反映は SyncService.ApplyAssetJson に一本化（検査で固定している）
+                    var dbAsset = SyncService.ApplyAssetJson(existing, assetJson, assetDir);
+                    if (existing == null)
                     {
-                        // 新規登録
-                        dbAsset = Domain.Entities.Asset.Create(assetJson.Name, assetDir, assetJson.DisplayName, assetJson.Description);
-                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var status))
-                        {
-                            dbAsset.Update(status: status);
-                        }
-                        if (assetJson.Tags != null && assetJson.Tags.Count > 0)
-                        {
-                            dbAsset.Update(tags: assetJson.Tags);
-                        }
                         db.Assets.Add(dbAsset);
-                        assetCount++;
-                    }
-                    else
-                    {
-                        // 既存更新
-                        AssetStatus? newStatus = null;
-                        if (assetJson.Status != null && TryParseAssetStatus(assetJson.Status, out var parsed))
-                        {
-                            newStatus = parsed;
-                        }
-                        dbAsset.Update(
-                            displayName: assetJson.DisplayName,
-                            description: assetJson.Description,
-                            status: newStatus,
-                            tags: assetJson.Tags);
-                        dbAsset.UpdatePath(assetDir);
+                        pendingAssets++;
                     }
                 }
                 db.SaveChanges();
+                assetCount += pendingAssets; pendingAssets = 0;
             }
 
             // 2. Parts の UPSERT
@@ -389,7 +411,7 @@ public class SyncCommand : Command
                         if (partJson.Memo != null) newPart.Memo = partJson.Memo;
 
                         db.Parts.Add(newPart);
-                        partCount++;
+                        pendingParts++;
                     }
                     else
                     {
@@ -403,6 +425,7 @@ public class SyncCommand : Command
                     }
                 }
                 db.SaveChanges();
+                partCount += pendingParts; pendingParts = 0;
             }
 
             // 3. Asset Links（AssetComponents + AssetSubAssets）の UPSERT
@@ -454,7 +477,7 @@ public class SyncCommand : Command
                             {
                                 db.AssetComponents.Add(
                                     AssetComponent.Create(dbAsset.Id, dbPart.Id, partLink.Quantity));
-                                linkCount++;
+                                pendingLinks++;
                             }
                         }
                     }
@@ -484,19 +507,22 @@ public class SyncCommand : Command
                                     Notes = childLink.Notes,
                                     CreatedAt = DateTime.UtcNow
                                 });
-                                linkCount++;
+                                pendingLinks++;
                             }
                         }
                     }
                 }
                 db.SaveChanges();
+                linkCount += pendingLinks; pendingLinks = 0;
             }
 
             Console.WriteLine($"[SUCCESS] DB同期完了: {assetCount} 件の装置、{partCount} 件のパーツを新規登録、{linkCount} 件のリンクを追加");
+            return new DbSyncResult(assetCount, partCount, linkCount, null);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[ERROR] DB同期中にエラーが発生しました: {ex.Message}");
+            return new DbSyncResult(assetCount, partCount, linkCount, ex.Message, pendingAssets, pendingParts, pendingLinks);
         }
     }
 
@@ -524,10 +550,10 @@ public class SyncCommand : Command
     /// <summary>
     /// 欠落した asset.json を報告し、`restore` が真なら DB の内容から復元する。
     /// </summary>
-    private static void ReportAssetJsonGaps(string assetsDir, bool restore, bool dryRun)
+    private static GapReport ReportAssetJsonGaps(string assetsDir, bool restore, bool dryRun)
     {
         var gaps = FindAssetJsonGaps(assetsDir);
-        if (gaps.Count == 0) return;
+        if (gaps.Count == 0) return new GapReport(gaps, restore, null, Array.Empty<string>());
 
         Console.WriteLine();
         Console.WriteLine($"[WARN] DB に行があるのに asset.json が無い装置が {gaps.Count} 件あります。");
@@ -544,50 +570,44 @@ public class SyncCommand : Command
         {
             Console.WriteLine();
             Console.WriteLine("       復元するには daid sync --restore-json を実行してください。");
-            return;
+            return new GapReport(gaps, restore, null, Array.Empty<string>());
         }
 
         if (dryRun)
         {
             Console.WriteLine();
             Console.WriteLine("       (dry-run: 復元は行われません)");
-            return;
+            return new GapReport(gaps, restore, null, Array.Empty<string>());
         }
 
         int restored;
+        var errors = new List<string>();
         try
         {
             using var db = CommandHelper.CreateDbContext();
             restored = new SyncService(db, new HashService()).RestoreAssetJson(
                 gaps,
-                (name, ex) => Console.Error.WriteLine($"      [ERROR] {name} の復元に失敗しました: {ex.Message}"));
+                (name, ex) =>
+                {
+                    Console.Error.WriteLine($"      [ERROR] {name} の復元に失敗しました: {ex.Message}");
+                    errors.Add($"{name} の復元に失敗しました: {ex.Message}");
+                });
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[ERROR] asset.json の復元に失敗しました: {ex.Message}");
-            return;
+            errors.Add($"asset.json の復元に失敗しました: {ex.Message}");
+            return new GapReport(gaps, restore, null, errors);
         }
 
         Console.WriteLine();
         Console.WriteLine($"       ✓ {restored} 件の asset.json を DB の内容から復元しました。");
         Console.WriteLine("       復元した asset.json は対象リポジトリで未追跡ファイルになります。");
         Console.WriteLine("       追跡するか .gitignore に入れるかを決めてください。");
+        return new GapReport(gaps, restore, restored, errors);
     }
 
-    private static bool TryParseAssetStatus(string status, out AssetStatus result)
-    {
-        result = status.ToLowerInvariant() switch
-        {
-            "active" => AssetStatus.Active,
-            "dormant" => AssetStatus.Dormant,
-            "archived" => AssetStatus.Archived,
-            "third_party" => AssetStatus.ThirdParty,
-            _ => AssetStatus.Active
-        };
-        return status.ToLowerInvariant() is "active" or "dormant" or "archived" or "third_party";
-    }
-
-    private static void SyncVectorIndex(string componentsDir, string assetsDir, PartJsonReader partJsonReader)
+    private static VectorSyncResult SyncVectorIndex(string componentsDir, string assetsDir, PartJsonReader partJsonReader)
     {
         Console.WriteLine("Syncing to vector index...");
 
@@ -597,7 +617,7 @@ public class SyncCommand : Command
             if (!settings.GetBool("vector_search.enabled", true))
             {
                 Console.WriteLine("[INFO] ベクトル検索が無効化されています");
-                return;
+                return new VectorSyncResult("disabled", "ベクトル検索が無効化されています");
             }
 
             var embeddingProvider = EmbeddingProviderFactory.Create(settings);
@@ -677,16 +697,25 @@ public class SyncCommand : Command
                 var messages = new List<string>();
                 if (partCount > 0) messages.Add($"{partCount} 件のパーツ");
                 if (docCount > 0) messages.Add($"{docCount} 件の文書チャンク");
-                Console.WriteLine($"[SUCCESS] {string.Join("、", messages)}をベクトルインデックスに同期しました");
+                var successMessage = $"{string.Join("、", messages)}をベクトルインデックスに同期しました";
+                Console.WriteLine($"[SUCCESS] {successMessage}");
+                return new VectorSyncResult("synced", successMessage);
             }
             else
             {
+                // 文書の行を消した後で作り直す点が無いとき、古いグラフが残らないよう再構築（空なら捨てる）する
+                if (existingDocs.Count > 0)
+                {
+                    vectorService.RebuildIndexAsync().GetAwaiter().GetResult();
+                }
                 Console.WriteLine("[INFO] 同期対象のデータがありません");
+                return new VectorSyncResult("nothing", "同期対象のデータがありません");
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] ベクトルインデックス同期中にエラーが発生しました: {ex.Message}");
+            return new VectorSyncResult("error", ex.Message);
         }
     }
 
@@ -723,7 +752,7 @@ public class SyncCommand : Command
                 for (int i = 0; i < chunks.Count; i++)
                 {
                     // 決定論的 GUID: asset名 + ファイルパス + チャンクインデックスから生成
-                    var deterministicId = GenerateDeterministicGuid($"{assetName}/{fileName}#{i}");
+                    var deterministicId = DocChunkId(assetName, fileName, i);
 
                     docPoints.Add(new DesignKnowledgePoint
                     {
@@ -789,6 +818,14 @@ public class SyncCommand : Command
 
         return chunks;
     }
+
+    /// <summary>
+    /// 文書チャンクの決定論的 ID。<b>装置名とファイル名から作られる</b>ため、装置を改名すると、
+    /// 旧名の行が、その名前を再利用した別の装置の行と同じ ID になりうる。
+    /// そのため <c>asset rename</c> は文書チャンクの行を書き換えず消す。
+    /// </summary>
+    public static Guid DocChunkId(string assetName, string fileName, int chunkIndex)
+        => GenerateDeterministicGuid($"{assetName}/{fileName}#{chunkIndex}");
 
     /// <summary>
     /// 文字列から決定論的な GUID を生成する（SHA256 ベース）。

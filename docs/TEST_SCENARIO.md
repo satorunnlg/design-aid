@@ -667,6 +667,121 @@ daid はプロトコルを SDK に任せているため、**ビルドが通る�
 
 ---
 
+## Phase 10c: 装置の改名（asset rename）
+
+**ID を変えずに名前とフォルダを変えること、衝突では何も変えずに止まること**を確認する。
+Phase 10 の後で装置もパーツも空の状態から始め、最後に再び空へ戻す。
+
+### 10c.1 準備
+
+```bash
+daid asset add alpha --display-name "アルファ"
+daid asset add beta
+daid asset add gamma
+daid part add RN-PART-001 --type Fabricated --name "改名試験用部品"
+daid part link RN-PART-001 --asset alpha --quantity 2
+# gamma が alpha を子装置として組み込む（asset_links.json に alpha が「名前で」書かれる）
+daid asset link gamma --child alpha --quantity 1 --notes "改名試験"
+
+# alpha に文書を置き、ベクトル索引に載せる（改名で文書チャンクの行が消え、再同期で新しい名前のキーで作り直されることの確認用）
+echo "# alpha の設計書" > assets/alpha/DESIGN.md
+daid sync --include-vectors
+#   sqlite3 design_aid.db "SELECT COUNT(*) FROM VectorIndex WHERE Type='asset_doc' AND AssetName='alpha';" が 1 以上
+
+# 改名前の ID を控える（asset.json と DB の両方）
+#   assets/alpha/asset.json の "id"
+#   sqlite3 design_aid.db "SELECT Id FROM Assets WHERE Name='alpha';"
+```
+
+### 10c.2 改名
+
+```bash
+daid asset rename alpha alpha2
+
+# 期待結果（終了コード 0）:
+# - "Asset renamed: alpha -> alpha2" と、ID・Path・PreviousNames: alpha が表示される
+# - 終わりに「リモートの名前・URL は変えていません」と表示される
+# - **ID が変わっていない**: assets/alpha2/asset.json の "id" と、DB の Assets.Id が、改名前の ID と同じ
+# - assets/alpha/ は無く、assets/alpha2/ がある（.git ごと移っている: assets/alpha2/.git が存在する）
+# - assets/alpha2/asset.json の "name" が alpha2、"display_name" は「アルファ」のまま（旧名と違うので変えない）、
+#   "previous_names" が ["alpha"]
+# - DB の Assets: Name=alpha2、DirectoryPath が assets/alpha2、PreviousNames が ["alpha"]
+# - VectorIndex に AssetName='alpha' の行が残らず、alpha の asset_doc の行は消えている（再同期で作り直す）
+```
+
+### 10c.3 引き継ぎの確認
+
+```bash
+daid asset list --verbose
+# 期待結果:
+# - alpha2 が一覧に出る（alpha は出ない）
+# - alpha2 に RN-PART-001 が x2 で紐づいたまま
+# - gamma の子装置が alpha2 になっている（gamma の asset_links.json の child_asset_name が alpha2 に書き換わっている）
+
+daid asset bom gamma --include-subassets
+# 期待結果: 子装置 alpha2 の部品が BOM に出る（子装置の参照が切れていない）
+
+daid sync
+daid check
+# 期待結果: エラーなし。sync の後も alpha2 の ID が同じ（DB の行が増えない: SELECT COUNT(*) FROM Assets が 3）
+
+daid sync --include-vectors
+# 期待結果: alpha2 の asset_doc の行が同数のまま（重複しない）。AssetName='alpha' の行は残らない
+```
+
+### 10c.4 衝突・不正は何も変えずに止まる
+
+```bash
+daid asset rename alpha2 beta     # 新名の装置が既にある
+daid asset rename missing zzz     # 旧名の装置が無い
+daid asset rename alpha2 alpha2   # 旧名と新名が同じ
+daid asset rename alpha2 ALPHA2   # 大文字小文字だけの違い
+daid asset rename alpha2 "a/b"    # 名前の検査に通らない
+daid asset rename alpha2 CON      # OS の予約名
+
+# 期待結果（すべて）:
+# - 終了コード 1、stderr に [ERROR] と「何も変更していません。」
+# - assets/ の中身・各 asset.json・DB の Assets が、実行前と同じ
+```
+
+```bash
+# 移動先が既にフォルダ・ファイルとしてある場合
+mkdir assets/blocked
+daid asset rename alpha2 blocked
+echo x > assets/blocked2 && daid asset rename alpha2 blocked2
+
+# 期待結果: どちらも終了コード 1。assets/alpha2 は動かない
+rmdir assets/blocked && rm assets/blocked2
+```
+
+### 10c.5 --json と --quiet
+
+```bash
+daid asset rename alpha2 alpha3 --json
+# 期待結果: success=true、id が改名前と同じ、previousNames が ["alpha","alpha2"]、gitRemoteChanged=false の JSON
+
+daid asset rename alpha3 alpha4 --quiet
+# 期待結果: 標準出力に何も出ない（終了コード 0）。previous_names は ["alpha","alpha2","alpha3"]
+
+daid asset rename alpha4 beta --json
+# 期待結果: 終了コード 1、標準出力に success=false の JSON、stderr にエラー
+```
+
+### 10c.6 後始末
+
+```bash
+daid asset unlink gamma --child alpha4
+daid part remove RN-PART-001      # y で回答
+daid asset remove alpha4          # y で回答
+daid asset remove beta            # y で回答
+daid asset remove gamma           # y で回答
+daid asset list
+
+# 期待結果: 装置・パーツが空に戻る
+```
+
+---
+
 ## Phase 11: 完全クリーンアップ
 
 ### 11.1 バックアップファイルの削除
@@ -704,6 +819,7 @@ ls -la test-project/ 2>&1 || echo "test directory removed successfully"
 - [ ] Phase 8: backup が正常動作
 - [ ] Phase 9: 全削除操作が正常動作
 - [ ] Phase 10: restore が正常動作
+- [ ] Phase 10c: asset rename が ID を変えずに名前とフォルダを変え、衝突・不正では何も変えずに止まる
 - [ ] Phase 11: テストディレクトリが完全に削除可能
 
 ## 備考
@@ -715,3 +831,4 @@ ls -la test-project/ 2>&1 || echo "test directory removed successfully"
 - AWS S3 バックアップは AWS CLI/プロファイルが設定されていない場合はスキップしてください
 - 各コマンドのヘルプは `--help` オプションで確認できます
 - 削除コマンド（asset remove, part remove）は確認プロンプトが表示されます
+- `asset rename` は ID を変えない。改名後に旧名のフォルダ・asset.json は残らない

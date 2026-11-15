@@ -14,7 +14,7 @@ public class PartListCommand : Command
     {
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
-        this.Handler = CommandHandler.Create<bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool>(Execute));
     }
 
     private static void Execute(bool json)

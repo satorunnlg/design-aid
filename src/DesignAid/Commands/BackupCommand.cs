@@ -12,6 +12,12 @@ namespace DesignAid.Commands;
 /// </summary>
 public class BackupCommand : Command
 {
+    /// <summary>
+    /// S3 へのアップロード（ローカルの ZIP のパス, S3 の URI, AWS プロファイル → 終了コード）。
+    /// 既定は AWS CLI。検査では、アップロードの時点でロックが解放済みであることを確かめるために差し替える。
+    /// </summary>
+    public Func<string, string, string, Task<int>> Uploader { get; set; } = UploadToS3Async;
+
     public BackupCommand() : base("backup", "データディレクトリをバックアップする（DB dump含む）")
     {
         var dataPathOption = new Option<string?>(
@@ -80,6 +86,15 @@ public class BackupCommand : Command
             if (!Directory.Exists(dataDir))
             {
                 Console.Error.WriteLine($"データディレクトリが見つかりません: {dataDir}");
+                return 1;
+            }
+
+            // バックアップは読み取りだが、改名などの途中の状態（フォルダと DB が食い違う瞬間）を取り込まないよう、
+            // プロジェクト共通のロックに参加する
+            using var backupLock = CommandHelper.AcquireProjectLockTolerant(dataDir, out var lockBusy);
+            if (lockBusy)
+            {
+                Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
                 return 1;
             }
 
@@ -159,6 +174,9 @@ public class BackupCommand : Command
                     Console.WriteLine("  (ドライラン: ZIP は作成されません)");
                 }
 
+                // コピーと ZIP が済んだので、ロックを解放する（S3 へのアップロードの間は持たない）
+                backupLock?.Dispose();
+
                 if (localOnly)
                 {
                     if (!dryRun && output == null)
@@ -209,7 +227,7 @@ public class BackupCommand : Command
                 }
 
                 // AWS CLI を使用してアップロード
-                var result = await UploadToS3Async(zipFilePath, s3Uri, awsProfile ?? "default");
+                var result = await Uploader(zipFilePath, s3Uri, awsProfile ?? "default");
 
                 // 一時ファイルを削除
                 if (File.Exists(zipFilePath) && output == null)
@@ -272,6 +290,11 @@ public class BackupCommand : Command
 
             // SQLite 関連ファイルはスキップ（既にバックアップ済み or スキップ指定）
             var fileName = Path.GetFileName(file);
+            if (DesignAid.Application.Services.ProjectLock.IsLockFileName(fileName))
+                continue; // ロックファイルは他のプロセスが開いていて読めない。復元にも要らない
+            // 検索のキャッシュ（再構築できる）と、それを書いている途中の一時ファイルは含めない（共有違反で落ちうる）
+            if (fileName.StartsWith("hnsw_index.bin") || fileName.EndsWith(".hnsw") || fileName.EndsWith(".tmp"))
+                continue;
             if (fileName.StartsWith("design_aid.db"))
             {
                 if (!skipDb)

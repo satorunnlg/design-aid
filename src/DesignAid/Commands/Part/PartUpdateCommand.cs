@@ -34,6 +34,8 @@ public class PartUpdateCommand : Command
         string? currency)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
         var componentsDir = CommandHelper.GetComponentsDirectory();
         var partPath = Path.Combine(componentsDir, partNumber);
 

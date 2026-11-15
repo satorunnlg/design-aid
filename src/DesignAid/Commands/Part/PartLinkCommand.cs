@@ -24,6 +24,8 @@ public class PartLinkCommand : Command
     private static void Execute(string partNumber, string asset, int quantity)
     {
         if (CommandHelper.EnsureDataDirectory() == null) return;
+        using var projectLock = CommandHelper.AcquireProjectLock();
+        if (projectLock == null) return;
         var assetsDir = CommandHelper.GetAssetsDirectory();
         var assetPath = Path.Combine(assetsDir, asset);
         var assetJsonReader = new AssetJsonReader();

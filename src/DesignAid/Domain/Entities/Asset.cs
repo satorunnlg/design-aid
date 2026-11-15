@@ -51,6 +51,21 @@ public class Asset
         set => TagsRaw = value.Count > 0 ? string.Join(",", value) : null;
     }
 
+    /// <summary>変更前の名前（JSON 配列の文字列で内部保持。古い順）</summary>
+    public string? PreviousNamesRaw { get; set; }
+
+    /// <summary>
+    /// 変更前の名前の一覧（古い順）。<c>asset rename</c> が追記する。
+    /// asset.json の <c>previous_names</c> と対応する。
+    /// </summary>
+    public List<string> PreviousNames
+    {
+        get => string.IsNullOrWhiteSpace(PreviousNamesRaw)
+            ? new List<string>()
+            : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(PreviousNamesRaw) ?? new List<string>());
+        set => PreviousNamesRaw = value.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(value) : null;
+    }
+
     /// <summary>作成日時</summary>
     public DateTime CreatedAt { get; private set; }
 
@@ -145,12 +160,40 @@ public class Asset
         string? displayName = null,
         string? description = null,
         AssetStatus? status = null,
-        List<string>? tags = null)
+        List<string>? tags = null,
+        List<string>? previousNames = null)
     {
         DisplayName = displayName ?? DisplayName;
         Description = description ?? Description;
         if (status.HasValue) Status = status.Value;
         if (tags != null) Tags = tags;
+        if (previousNames != null) PreviousNames = previousNames;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// 装置名とディレクトリパスを変更する（<c>asset rename</c> 用）。
+    /// <b>ID は変えない。</b>
+    /// </summary>
+    /// <param name="newName">新しい装置名</param>
+    /// <param name="newDirectoryPath">新しいディレクトリパス</param>
+    /// <param name="displayName">新しい表示名（null なら変えない）</param>
+    /// <param name="previousNames">変更後の「変更前の名前」一覧</param>
+    public void Rename(
+        string newName,
+        string newDirectoryPath,
+        string? displayName,
+        List<string> previousNames)
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+            throw new ArgumentException("装置名は必須です", nameof(newName));
+        if (string.IsNullOrWhiteSpace(newDirectoryPath))
+            throw new ArgumentException("ディレクトリパスは必須です", nameof(newDirectoryPath));
+
+        Name = newName;
+        DirectoryPath = Path.GetFullPath(newDirectoryPath);
+        if (displayName != null) DisplayName = displayName;
+        PreviousNames = previousNames;
         UpdatedAt = DateTime.UtcNow;
     }
 

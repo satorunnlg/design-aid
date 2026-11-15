@@ -75,6 +75,80 @@ public static class CommandHelper
     }
 
     /// <summary>
+    /// プロジェクト単位の共通ロック（<see cref="ProjectLock"/>）を取る。装置の状態を変えるコマンドが、
+    /// <see cref="EnsureDataDirectory"/> の直後に呼ぶ。取れなければ待たずに stderr へ出し、null を返す
+    /// （呼び出し元は return すること）。EnsureDataDirectory で検証済みであること。
+    /// </summary>
+    /// <param name="json">--json のとき、標準出力にも失敗の JSON を 1 つだけ出す（診断は stderr）</param>
+    public static ProjectLock.Handle? AcquireProjectLock(bool json = false)
+    {
+        string? error = null;
+        try
+        {
+            var handle = ProjectLock.TryAcquire(GetDataDirectory()!);
+            if (handle != null) return handle;
+            error = "別の変更が実行中です（改名・sync など、同じプロジェクトを変更する処理は同時に 1 つしか実行できません）。終わってからやり直してください。";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = $"ロックを取得できませんでした: {ex.Message}";
+        }
+
+        Console.Error.WriteLine($"[ERROR] {error}");
+        if (json)
+        {
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { success = false, errors = new[] { error } }));
+        }
+        Environment.ExitCode = 1;
+        return null;
+    }
+
+    /// <summary>
+    /// <c>--json</c> のとき、人向けの出力（進捗・[SUCCESS] など）を標準エラーへ向ける範囲を作る。
+    /// 契約: <c>--json</c> の標準出力は JSON 1 つだけ（#10）。JSON を出す経路で、JSON を出したあとにも人向けの出力が
+    /// 続く処理（DB 同期など）を呼ぶときに <c>using</c> で包む。<paramref name="json"/> が偽なら何もしない。
+    /// </summary>
+    public static IDisposable HumanOutput(bool json)
+    {
+        if (!json) return NoopScope.Instance;
+        var previous = Console.Out;
+        Console.SetOut(Console.Error);
+        return new RestoreOutScope(previous);
+    }
+
+    private sealed class NoopScope : IDisposable
+    {
+        public static readonly NoopScope Instance = new();
+        public void Dispose() { }
+    }
+
+    private sealed class RestoreOutScope(TextWriter previous) : IDisposable
+    {
+        public void Dispose() => Console.SetOut(previous);
+    }
+
+    /// <summary>
+    /// 読み取り中心の入口（backup）用のロック取得。書き込み権限が無くてロックファイルを作れないとき
+    /// （読み取り専用の場所）は、警告を出して null を返す（ロックなしで続けてよい）。
+    /// 別の処理が持っているとき（busy）は <paramref name="busy"/> を true にして null を返す（止めること）。
+    /// </summary>
+    public static ProjectLock.Handle? AcquireProjectLockTolerant(string dataDir, out bool busy)
+    {
+        busy = false;
+        try
+        {
+            var handle = ProjectLock.TryAcquire(dataDir);
+            busy = handle == null;
+            return handle;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.Error.WriteLine($"[WARN] ロックファイルを作れないため（書き込み権限がありません）、ロックなしで続けます: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// カレントディレクトリから上方向に最大2階層まで design_aid.db を探索し、
     /// プロジェクトルート（design_aid.db が存在するディレクトリ）を返す。
     /// 見つからない場合は null。
@@ -130,15 +204,22 @@ public static class CommandHelper
         var optionsBuilder = new DbContextOptionsBuilder<DesignAidDbContext>();
         optionsBuilder.UseSqlite($"Data Source={dbPath}");
         var context = new DesignAidDbContext(optionsBuilder.Options);
-        // 未適用のマイグレーションがある場合のみ Migrate を実行する。
-        // Migrate() は毎回 __EFMigrationsLock を取得しに行くため、過去の Migrate 中の
-        // 異常終了で残留したロック行があると SqliteHistoryRepository が無限リトライし、
-        // write 系コマンドがハングする。通常運用（pending なし）では Migrate を呼ばない。
-        if (context.Database.GetPendingMigrations().Any())
-        {
-            context.Database.Migrate();
-        }
+        ApplyPendingMigrations(context);
         return context;
+    }
+
+    /// <summary>
+    /// 未適用のマイグレーションがある場合のみ Migrate を実行する。
+    /// Migrate() は毎回 __EFMigrationsLock を取得しに行くため、過去の Migrate 中の
+    /// 異常終了で残留したロック行があると SqliteHistoryRepository が無限リトライし、
+    /// write 系コマンドがハングする。通常運用（pending なし）では Migrate を呼ばない。
+    /// </summary>
+    /// <returns>Migrate を実行したら true</returns>
+    public static bool ApplyPendingMigrations(DesignAidDbContext context)
+    {
+        if (!context.Database.GetPendingMigrations().Any()) return false;
+        context.Database.Migrate();
+        return true;
     }
 
     /// <summary>
@@ -167,6 +248,10 @@ public static class CommandHelper
     {
         var dataDir = GetDataDirectory()!;
         var dbPath = GetDatabasePath();
+
+        // 旧版の DB のまま使っても、追加された列で失敗しないよう、ファクトリを登録する前に
+        // 既存の経路（保留中のマイグレーションがあるときだけ Migrate）を通す（Dashboard・MCP と同じ）
+        using (var ctx = CreateDbContext()) { }
 
         var services = new ServiceCollection();
         services.AddDesignAidServices(dbPath, dataDir);

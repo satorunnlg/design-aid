@@ -34,7 +34,7 @@ public class ConfigShowCommand : Command
 
         AddOption(jsonOption);
 
-        Handler = CommandHandler.Create<bool>(ExecuteAsync);
+        Handler = JsonGuard.Wrap(this, CommandHandler.Create<bool>(ExecuteAsync));
     }
 
     private async Task<int> ExecuteAsync(bool json)

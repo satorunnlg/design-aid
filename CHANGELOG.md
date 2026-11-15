@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **終了コードの変更（#8）:** `Environment.ExitCode` を設定するだけのハンドラが、失敗しても終了コード 0 を返していたのを直した。
+  `Program.Main` が `InvokeAsync` の戻り値が 0 のとき `Environment.ExitCode` を返す。**これまで 0 だった失敗が 0 以外になる**
+  （プロジェクトが無い場所の `asset list` などは 3、`check` の整合性エラーは 5 など）。終了コードが 0 であることを前提にしたスクリプトは直す
+- `--json` のコマンドは、初期化の失敗や例外でも標準出力が有効な JSON 1 つになる（`{ "success": false, "errors": [...], "exitCode": N }`、
+  診断は標準エラー）。以前は標準出力が空になることがあった（#10）
+- `asset rename` が、壊れた zip（検査できないアーカイブ）で止まるとき、エラーに zip のパスと直し方（その zip を退避する、または
+  `daid archive restore asset <名前>` で戻す）を出す。止める判定は変えていない（#10）
+
+### Fixed
+
+- `asset rename` が部品の索引行の装置名を書き換えるとき `UpdatedAt` を進めていなかったため、検索のキャッシュの古さの判定が検知できなかった。
+  VectorIndex の行を書き換える箇所がすべて `UpdatedAt` を進めることを、静的な検査で固定した（#10）
+- プロジェクトのロックの再入の判定で、junction・symlink 経由の同じ場所を別の場所と見なして自分自身のロックに止められていたのを、
+  リンクを解決した実体のパスで判定するように直した（#10）
+- 検索のキャッシュを新しい形式で書く前に旧形式の `.stamp` を消し、消せなければ書かない（旧版の daid が壊れた bin を読む隙をなくした）（#10）
+- `CommandHelper.BuildServiceProvider` も、ファクトリを登録する前に保留中のマイグレーションの経路を通すようにした（ダッシュボード・MCP と同じ）（#10）
+
+### Added
+
+- `BackupCommand.Uploader`（S3 へのアップロードの差し替え口）。backup がアップロードの前にロックを解放することの検査のため（#10）
+
+## [0.6.2-alpha] - 2026-11-15
+
+### Added
+
+- **`daid asset rename <old-name> <new-name>`**（#7）。ID を変えずに装置の名前とフォルダを変える
+  - asset.json と DB の両方で同じ ID のまま `name` だけを変え、`assets/<old>/` を `assets/<new>/` へ
+    git ごと移す。git のリモートは変えない（終わりに表示する）
+  - asset.json に `previous_names`（古い順・重複なし）を追加し、変更前の名前を残す。DB の `Assets` にも
+    `PreviousNames` 列を追加（マイグレーション `AddAssetPreviousNames`。次に daid を実行したとき自動で適用される）。
+    `asset update` / `sync` / `sync --restore-json` はこの欄を落とさずに往復させる
+  - 名前や ID で結ばれたものを同じ処理で揃える: 他の装置の `asset_links.json` の子装置の参照、
+    DB の `DirectoryPath`、ベクトル索引の装置名と文書のパス。部品・子装置のリンクは ID で結ばれているので引き継がれる
+  - 事前確認（旧名なし・新名が不正・新名が既にある・移動先が既にある・旧名と新名が同じ）に 1 つでも当てはまれば
+    何も変えずに終了コード 1 で止まる。途中で失敗したら逆順に戻す
+  - `--json` / `--quiet`
+  - 注意: 0.6.1-alpha 以前の daid の `asset update` は `previous_names` を消す。改名を使ったら、同じ DB と assets/ を扱う daid を全部更新する
+- プロジェクト共通のロック（`.daid.lock`。置いたままにして `FileShare.None` で保持し、待たずに止める）。sync・setup・
+  asset add/update/remove/rename/link/unlink・part add/update/remove/link・archive asset/part/restore・deploy・restore・backup・
+  ダッシュボードの更新・MCP の書き込み系が参加し、同時の実行で中間状態を取り込み合わないようにした。
+  参加の漏れは静的な検査（`ProjectLockCoverageTests`）が捕まえる
+- 改名のあと、文書チャンクの索引行を消し、HNSW のキャッシュを無効にする（起動中の検索も VectorIndex の変化を件数・Id・更新時刻の
+  判定値で検知して作り直す。ディスクのキャッシュにも構築時の判定値を付け、一致しなければ使わない）
+- 装置名: `CONIN$`・`CONOUT$` と上付き数字の予約名（`COM¹` など）と、末尾の空白付きの予約名（`CON .txt`）を拒否。新しく付ける名前は UTF-8 で 255 バイトまで
+  （macOS の NFD 分解後の長さも数える）
+- `asset add` が装置名を検査するようになった（`asset rename` と同じ検査。空・パス区切り・`..`・
+  Windows の禁止文字や予約名・末尾の `.` を終了コード 2 で拒否する）
+
+### Fixed
+
+- `--json` を付けて成功したときも、標準出力は JSON 1 つだけになる（#10）。`sync --json` で `components/` が無いとき、JSON のあとに
+  `Syncing to database...` と `[SUCCESS] ...` を標準出力へ出していた。`--json` のときの人向けの出力は標準エラーへ向ける
+  （`CommandHelper.HumanOutput`）。同じ種類として、`asset bom --json --export csv` が JSON でなく CSV を標準出力へ出していたのも直した
+  （`--json` を優先し、CSV は出さずに警告を標準エラーへ）。`--json` を持つ全コマンドを成功の経路で動かす検査
+  （`JsonStdoutContractTests`。コマンドは `BuildRootCommand()` から列挙する）を足した
+- `sync --json` が、`components/` があるとき変更の一覧を出すだけで、`--json` でない経路が行う処理（DB 同期、`--restore-json` の復元、
+  `--include-vectors` のベクトル同期）をすべて飛ばしていた。`--json` の有無で行う処理を同じにし、違うのは出力の形だけにした
+  （人向けの出力は標準エラーへ。JSON には `database`・`assetJsonRestored`・`vectorIndex` で結果が入る。DB 同期などに失敗すると `success` が偽になる）。
+  `sync` と `sync --json` を同じ状態の 2 つのプロジェクトで動かし、DB の行とファイルが一致することを、`--dry-run`・`--restore-json`・
+  `--force`・`--skip-db`・components なしの組み合わせで固定した（#10）
+- `sync` の各段階（DB 同期・asset.json の復元・ベクトル同期）の失敗が、`--json` の有無にかかわらず終了コード 1 に届くようにした。
+  JSON の `success` と同じ判定（`SyncReport.Failed`）で、警告と正常なスキップ（disabled・nothing・dry-run）は失敗にしない。
+  asset.json の復元で個々の装置の書き込みに失敗したとき、`assetJsonRestoreErrors` に入り、成功と報告しない。
+  DB 同期が途中で失敗したときの件数は、確定した段階（SaveChanges が済んだ）だけを `assets`・`parts`・`links` に、未確定の分を
+  `uncommitted` に分けて報告する（#10）
+- プロジェクトのロックの再入の判定: リンク先がルート（`/`）のとき、末尾の区切りを除く処理でルートが空文字になり、以降の階層が相対パスとして
+  連結されていたのを直した。macOS で OS の名前だけで大文字小文字を区別しない比較にしていたのをやめ、各階層をディスク上の実際の綴りに直して
+  から Ordinal で比べる（大文字小文字を区別しないボリュームの同じ実体は同じキー、区別するボリュームの別の実体は別のキー）（#10）
+- 引数の解析に失敗したときの `--json` の判定が、文字列の走査だけで `--json false` を有効と見なしていたのを、解析済みのオプションの値
+  優先にした（未知のコマンドだけ走査で補い、走査も `--json false`・`--json=false`・`--` 以後を解釈する）（#10）
+- `asset rename` が検査できないアーカイブやアーカイブ済みの装置で止まるときの案内が、装置名をコマンドの文字列に埋め込んでいた
+  （空白・引用符・先頭の `-` を含む名前で、そのまま実行すると壊れた）。名前は別の行で示し、コマンドは `<名前>` の形にした（#10）
+- 引数の解析に失敗したときの `--json` の事前の判定が、実行のときと別のパーサー（既定のヘルプのオプションが無い）を使っていたため、
+  `daid asset list --json --help` がヘルプを出さずに失敗の JSON になっていた。`UseDefaults()` 付きのパーサーを一度だけ組み、同じ解析の
+  結果で判定と実行をする。`--json` を持つ全コマンドで `--help`・`-h`・`-?` がヘルプを出して 0 で終わることを検査で固定した（#10）
+- 復旧の案内を `daid archive restore asset -- <名前>` の形にした。`--help` のようにオプションと同じ形の装置名が、名前の引数に届く（#10）
+- `--json` を付けたまま引数の解析に失敗したとき（例: `asset list --json --bogus`）、ヘルプの文が標準出力に出ていた。
+  標準出力は失敗の JSON 1 つだけ、診断は標準エラー、終了コードは 1 になる（#10）
+- プロジェクトのロックの再入の判定が macOS でも大文字小文字を区別しており（`Ordinal`）、既定の大小文字を区別しないボリュームで、
+  大小文字だけ違うパスを再入と見なさず自分のロックで止まっていた。Windows と同じく macOS も区別しない比較にした（#10）
+
 ## [0.6.1-alpha] - 2026-10-12
 
 ### Fixed

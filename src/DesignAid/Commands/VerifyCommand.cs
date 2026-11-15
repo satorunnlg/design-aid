@@ -17,7 +17,7 @@ public class VerifyCommand : Command
         this.Add(new Option<string?>("--standard", "特定の設計基準のみ検証"));
         this.Add(new Option<bool>("--json", "JSON形式で出力"));
 
-        this.Handler = CommandHandler.Create<string?, string?, bool>(Execute);
+        this.Handler = JsonGuard.Wrap(this, CommandHandler.Create<string?, string?, bool>(Execute));
     }
 
     private static void Execute(string? part, string? standard, bool json)

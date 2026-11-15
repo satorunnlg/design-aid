@@ -79,6 +79,14 @@ public class SetupCommand : Command
                 }
             }
 
+            // 初期化も、同じプロジェクトへの他の変更と同時に走らせない
+            using var setupLock = DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir);
+            if (setupLock == null)
+            {
+                Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
+                return 1;
+            }
+
             // .gitignore の作成（DB ファイルを除外）
             var gitignorePath = Path.Combine(dataDir, ".gitignore");
             if (!File.Exists(gitignorePath) || force)
@@ -104,6 +112,9 @@ public class SetupCommand : Command
 
                     # ダッシュボード PID ファイル
                     .dashboard.pid
+
+                    # プロジェクト共通のロックファイル
+                    .daid.lock
                     """;
 
                 await File.WriteAllTextAsync(gitignorePath, gitignoreContent);
@@ -111,7 +122,31 @@ public class SetupCommand : Command
             }
             else
             {
-                Console.WriteLine($"  [存在] .gitignore");
+                // 既存の .gitignore にロックファイルの行が無ければ追記する。元の改行（LF / CRLF）にそろえる。
+                // UTF-16 の BOM があるファイルは、UTF-8 で追記すると壊れるので追記せず、警告にする
+                var bytes = await File.ReadAllBytesAsync(gitignorePath);
+                var isUtf16 = bytes.Length >= 2 && ((bytes[0] == 0xFF && bytes[1] == 0xFE) || (bytes[0] == 0xFE && bytes[1] == 0xFF));
+                if (isUtf16)
+                {
+                    Console.Error.WriteLine($"[WARN] .gitignore が UTF-16 のため追記しませんでした。手で {DesignAid.Application.Services.ProjectLock.FileName} を足してください");
+                }
+                else
+                {
+                    var existingText = System.Text.Encoding.UTF8.GetString(bytes);
+                    var lines = existingText.Split('\n').Select(l => l.TrimEnd('\r').Trim());
+                    if (!lines.Contains(DesignAid.Application.Services.ProjectLock.FileName))
+                    {
+                        var nl = existingText.Contains("\r\n") ? "\r\n" : "\n";
+                        var prefix = existingText.Length > 0 && !existingText.EndsWith('\n') ? nl : "";
+                        await File.AppendAllTextAsync(gitignorePath,
+                            $"{prefix}{nl}# プロジェクト共通のロックファイル{nl}{DesignAid.Application.Services.ProjectLock.FileName}{nl}");
+                        Console.WriteLine($"  [追記] .gitignore（{DesignAid.Application.Services.ProjectLock.FileName}）");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  [存在] .gitignore");
+                    }
+                }
             }
 
             // SQLite データベースの初期化（マイグレーション適用）

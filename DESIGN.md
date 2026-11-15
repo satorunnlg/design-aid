@@ -118,6 +118,7 @@ design-aid/
 │       │   │   ├── AssetRemoveCommand.cs
 │       │   │   ├── AssetLinkCommand.cs    # 子装置組み込み
 │       │   │   ├── AssetUpdateCommand.cs  # 装置情報更新
+│       │   │   ├── AssetRenameCommand.cs  # 装置の改名（ID は変えない）
 │       │   │   └── AssetBomCommand.cs     # BOM 原価集計
 │       │   ├── Part/                      # パーツ管理
 │       │   │   ├── PartAddCommand.cs
@@ -156,6 +157,8 @@ design-aid/
 │       ├── Application/                   # アプリケーションサービス
 │       │   ├── Services/
 │       │   │   ├── AssetService.cs        # 装置管理
+│       │   │   ├── AssetRenamePlanner.cs  # 改名の判定（純関数）
+│       │   │   ├── AssetRenameService.cs  # 改名の実行（移動→JSON→参照→DB、失敗時は逆順に戻す）
 │       │   │   ├── PartService.cs         # パーツ管理
 │       │   │   ├── HashService.cs         # ハッシュ計算・検証
 │       │   │   ├── SyncService.cs         # DB同期
@@ -423,11 +426,14 @@ design-aid/
   "description": "エレベータ更新案件の昇降機構",
   "status": "active",
   "tags": ["elevator", "2026"],
+  "previous_names": ["elevator-lift"],
   "created_at": "2026-02-02T10:30:00Z"
 }
 ```
 
 `status` は `active` / `dormant` / `archived` / `third_party`。`status` と `tags` は省略可。
+`previous_names` は `asset rename` が追記する変更前の名前（古い順・重複なし）で、改名したことのない装置には無い。
+DB の `Assets.PreviousNames`（JSON 配列の文字列）にも同じ内容を持ち、`sync --restore-json` で asset.json へ戻せる。
 `created_at` は **UTC（末尾 `Z`）** で書く。
 
 **注意**: 部品との紐づけは DB の中間テーブル（AssetComponents）で管理。
@@ -523,6 +529,7 @@ CREATE TABLE Assets (
     DisplayName TEXT,             -- 表示名
     Description TEXT,
     DirectoryPath TEXT NOT NULL,  -- data/assets/xxx への相対パス
+    PreviousNames TEXT,           -- 変更前の名前の JSON 配列（asset rename が追記。古い順）
     CreatedAt TEXT NOT NULL,
     UpdatedAt TEXT NOT NULL
 );
@@ -855,6 +862,7 @@ daid asset remove <name>                       # 装置を削除
 daid asset link <parent> --child <child>       # 子装置を組み込み（SubAsset）
 daid asset unlink <parent> --child <child>     # 子装置リンクを解除
 daid asset update <name>                       # 装置情報を更新
+daid asset rename <old> <new>                  # 装置を改名（ID は変えない）
 daid asset bom <name>                          # BOM（部品表）と原価集計
 
 # パーツ管理
@@ -1073,6 +1081,180 @@ Asset updated: lifting-unit
   Status: dormant
   Tags: mechanical, safety
 ```
+
+### daid asset rename
+
+装置の名前を変える（Issue #7）。**ID は変えない。** 使い方・事前確認の条件・出力は
+[docs/COMMAND_REFERENCE.md](./docs/COMMAND_REFERENCE.md#asset-rename) を参照。ここには設計上の決めごとを書く。
+
+```bash
+daid asset rename <old-name> <new-name> [--json] [--quiet]
+```
+
+**構成（判定と実行を分ける）:**
+
+| 部品 | 責務 |
+|------|------|
+| `AssetRenamePlanner`（純関数） | 名前の検査 `ValidateName`、事前確認 `CheckPreconditions`、`previous_names` の更新、表示名の決定、`asset_links.json` の参照の書き換え、ベクトル索引の表示名・パスの置換。ファイルにも DB にも触れない |
+| `AssetRenameService` | 事前確認の事実集め → 実行 → 失敗時の逆順の戻し。呼び出し側（`AssetRenameCommand`）は結果を表示して終了コードを決めるだけ |
+
+**実行順序と戻し:** フォルダ移動 → asset.json → 他の装置の `asset_links.json` → DB（トランザクション）。
+各段階で「元に戻す手」（元のバイト列の書き戻し・フォルダを戻す）を積み、失敗したら逆順に実行する。
+DB を最後に置くのは、DB だけがトランザクションで確実に戻せるため。戻せなかった段階は終了時に列挙し、
+手で確認が要ることを伝える。
+
+**事前確認:** 判定は 1 つの純関数（`CheckPreconditions`）に集約し、当てはまる理由を全部返す。
+旧名と新名が大文字小文字だけの違いのときは扱わない（Windows ではフォルダ名が区別されず、移動先が「既にある」ように見えるため）。
+
+**asset.json と DB の食い違い:** どちらか一方にしか無い装置も改名できる（無い側は触らず警告）。
+asset.json の ID と DB の ID が食い違っている装置（0.5.4-alpha 以前の登録）は、**それぞれの ID を変えず**警告する。
+`previous_names` は asset.json があればそれを土台に、無ければ DB を土台に更新し、両方へ同じ内容を書く。
+
+**`previous_names` の保存先が 2 か所ある理由:** asset.json が正本だが、`sync --restore-json` は DB から
+asset.json を作り直すため、DB に持たないと改名の履歴がその経路で消える。そのため `Assets.PreviousNames` 列
+（マイグレーション `AddAssetPreviousNames`）を足し、`sync`（asset.json → DB）と `sync --restore-json`（DB → asset.json）の
+両方向でこの欄を運ぶ。`asset update` は record の `with` で書き換えるため欄が残る。
+
+**同時の実行の排他（プロジェクト共通ロック `ProjectLock`）:** design_aid.db と同じディレクトリの `.daid.lock` を
+`FileShare.None` で開いたハンドルで持つ。**ファイルは置いたままにする**（`DeleteOnClose` にしない。削除の最中に開いて
+`UnauthorizedAccessException` になる競合と、Unix で解放と取得が重なって別の inode のファイルを同時に持てる隙をなくすため。
+開いていなければロックされていない。`.gitignore` には `.daid.lock` を入れる。`daid setup` が作る `.gitignore` には入れてあり、既存の `.gitignore` に行が無ければ `setup` が追記する）。
+`backup` は、書き込み権限が無くてロックファイルを作れない（読み取り専用の場所）ときは、警告を出してロックなしで続け、
+別の処理が持っているときは止める。コピーと ZIP が済んだら解放し、S3 へのアップロードの間は持たない。
+`restore` は、zip に入っているロックファイル（サブディレクトリの同じ名前を含む）を展開しない。
+**取れなければ待たずに止める**（待つ形は、以前のロック待ちのハングの原因になるので入れない）。ハンドルで持つので、
+プロセスが落ちてもロックは残らない。同じ呼び出しの流れ（AsyncLocal）で既に持っているときは二重に取らず、何もしない
+ハンドルを返す（外側が持ったまま内側を呼んでも自己競合しない。再入の判定のキーはパスを正規化し、Windows では大文字小文字を
+区別せず、**junction・symlink は解決した実体のパスにする**。パスの各階層を根から順に `DirectoryInfo.ResolveLinkTarget` で
+見るので、最後の階層だけでなく途中の階層がリンクでも解決する。ロックファイルもキーの場所に置くので、リンク経由でも実体と
+同じファイルを開く。リンクを解決できなければ（権限・循環など）解決前のパスのまま使う）。「共有違反・ロック違反」だけを busy とみなす（Windows は HResult の下位 16 ビットが 32 / 33、Unix は
+EWOULDBLOCK の errno = 11 / 35）。権限のエラー（`UnauthorizedAccessException`）や、場所が無い・容量不足などの IO エラーは
+busy にせず、元の原因のまま返す。`--json` のコマンドは、取れないとき標準出力に失敗の JSON を 1 つだけ出す
+（下の「`--json` の失敗の契約」）。
+
+**既知の限界:**
+- 再入の判定のキーはパスの正規化（フルパス・区切り文字・末尾の区切り、Windows は大文字小文字を無視）と、
+  junction・symlink の解決までで、8.3 短縮名・macOS の大文字小文字を区別しないボリュームなど、**同じ場所を別の表記で指す場合は
+  同じキーにならない**。そのとき再入が見分けられず、内側の取得が「別の変更が実行中」で止まる（誤って止まるだけで、
+  排他が破れる方向の誤りではない）。macOS は既定のボリュームが大文字小文字を区別しないが、キーは Unix として
+  大文字小文字を区別して比べる（同じ理由で、誤って止まる側）。リンクの解決に失敗したとき（権限・循環）も同じ側に倒れる。
+- 旧版の daid（判定値を `hnsw_index.bin.stamp` に別ファイルで持つ形）と新しい daid を同じプロジェクトで混ぜて使うと、
+  旧版が新しい形式の bin（先頭にヘッダーがある）を読んで、キャッシュが一度作り直しになりうる。新しい daid は、**新しい形式の bin を書く前に旧形式の
+  `.stamp` を消し、消せなければ（開かれているなど）bin を書かない**（警告を出し、次の検索で作り直す）ので、旧版が残った `.stamp` と
+  新しい bin を取り違えて読むことはない。ただし旧版は bin 本体をヘッダーなしで読むので、混ぜて使うと検索のたびに作り直しになる。
+  同じプロジェクトでは daid の版をそろえる。
+- Unix では、ロックを保持している間にロックファイルを手で消す（または別のファイルに差し替える）と、次に取る処理が
+  別の inode を開いてしまい、**排他が破れる**。ロックファイルは消さない・置き換えない。
+
+装置の状態（フォルダ・asset.json・asset_links.json・DB の行・索引）を変える入口がこのロックに参加する:
+`sync`、`setup`、`asset add / update / remove / rename / link / unlink`、`part add / update / remove / link`、
+`archive asset / part`・`archive restore`、`deploy`、`restore`（復元先が既にあるとき）、`backup`（読み取りだが、
+改名などの途中の状態を取り込まないため）、ダッシュボードの `UpdateAssetAsync` / `UpdatePartAsync`（取れなければ例外にして
+画面にエラーを出す）、MCP の `AddAsset` / `LinkPartToAsset` / `SyncAssets`。読み取りだけの入口（`asset list`・`asset bom`・
+`status`・`search` など）は参加しない。**対象外:** `config set`（Settings の表の設定値だけを書く。装置の状態ではない）、
+`dashboard`・`dashboard stop`（PID ファイルだけ）、`update`（ツール自体の更新）、`asset bom --export`（利用者が指定する出力先）。
+**入口の追加の漏れは、静的な検査（`ProjectLockCoverageTests`）が捕まえる:** Commands・`DashboardService`・MCP のツールの
+ソースを走査する（**コメントと文字列を除いてから**照らし、**`using` で取得する形**を要求し、コマンドはハンドラとして
+登録されたメソッドごと、ダッシュボードと MCP は public メソッドごとに見る）。`SaveChanges`・`File.Write/Move/Replace/Create/
+AppendAll`・`new StreamWriter`・`new FileStream`・`Directory.Delete/Move/CreateDirectory`・`ExecuteDelete`・`ExecuteSql`・
+`Process.Start` などを呼ぶ入口が `AcquireProjectLock` / `ProjectLock.TryAcquire` を `using` で取ることを確かめる。例外は検査の中に
+理由付きで明示している（検索のキャッシュの書き込み（`search` と MCP の `SearchDesigns`）は、装置の状態ではなくキャッシュで、
+原子的に書くのでロックを取らない）。
+
+**検索キャッシュの古さの判定（`VectorSearchService`）:** VectorIndex の状態の判定値（件数・最大 Id・Id の合計・最後の
+`UpdatedAt`）を、グラフを作ったときに保持し、検索のたびに 1 本の集約クエリで今の状態と比べ、違えばメモリ上とディスク上の
+キャッシュを捨てて作り直す。ディスクのキャッシュは、構築時の判定値を **bin の先頭のヘッダー（識別子 + 判定値の 1 行）** に入れた 1 つのファイルとし、
+一時の名前で書いてから置き換える（原子的。旧形式の `.stamp` は消す）。読み込むとき
+**今読んだ行から作った判定値**と照らして、違えば・ヘッダーが無ければ（旧形式）・読めなければ（別のプロセスが書いている
+最中など）使わず、例外にせず作り直す（判定値は行を読んだのと同じ結果から作るので、間に更新が入っても
+ずれない）。行の読み込みは `AsNoTracking` にする（長く生きる DbContext が追跡中の古い行を返すと、判定値が古いままになる）。
+`UpdatedAt` の列は既にあるので、マイグレーションは増やしていない。**行の中身を書き換える箇所は、すべて `UpdatedAt` を進める**
+（`VectorSearchService` の `UpsertPartAsync` / `UpsertPartsAsync`、改名の `AssetRenameService` の装置名の更新。行を消す処理は件数・Id の判定値で
+検知される）。進め忘れは静的な検査（`VectorIndexWriteCoverageTests`）が捕まえる: VectorIndex を扱うメンバーのうち、
+既存の行のプロパティへの代入（`x.AssetName = ...`）か SQL での直接の書き換え（`ExecuteUpdate`・`ExecuteSql` など）を含むものが、
+`x.UpdatedAt = DateTime.UtcNow` も含むことを要求する。SQL で直接書き換える処理は EF の変更追跡を通らず自動では進まないので、
+足すなら `UpdatedAt` も同じ文で進める。
+
+**戻しに失敗したとき:** 結果のフラグ（`FolderMoved` など）は、戻しに成功した段階だけ false に戻す。
+戻せなかった段階は「変わったまま」と報告し、`rollbackFailures` に理由を出す。
+
+**途中でプロセスが止まったとき（Ctrl+C・強制終了）:** 記録（ジャーナル）は持たない。変更は
+フォルダの移動 → asset.json → 他の装置の `asset_links.json` → DB のコミット の順なので、どこで止まったかを次の順に調べて戻す。
+
+1. **DB を直接見る**。`daid asset list` は asset.json から一覧を作るので、この判定には使えない（asset.json は DB より先に
+   書き換わるため、コミット前でも新名が出る）。装置の ID（asset.json の `id`）で DB を引く:
+   `sqlite3 design_aid.db "SELECT Name, PreviousNames FROM Assets WHERE Id = '<ID>' COLLATE NOCASE;"`
+   - 名前が新名なら、コミットまで済んでいる。改名は完了しているので何も戻さない（ベクトルの再計算だけ `daid sync --include-vectors`）
+   - 名前が旧名なら、コミット前に止まっている（2 へ）
+   - **行が無い装置**（asset.json だけの装置）は、この方法で判定できない。文書の索引の削除は行が無くてもコミットされるので、
+     索引の有無も証拠にならない。この場合は 3 に従って止める
+2. コミット前に止まっているときは、次の 3 つを**すべて旧名の状態に戻してから** `asset rename` をやり直す
+   - フォルダ: `assets/<新名>` があれば `assets/<旧名>` へ戻す
+   - asset.json: `name` が新名になっていれば旧名に戻し、`previous_names` の末尾に足された旧名を消す
+     （装置のリポジトリで `git diff asset.json` を見て、改名による差分だけを戻す）
+   - 他の装置の `asset_links.json`: 子装置の参照が新名になっていれば旧名に戻す（各リポジトリで `git diff` を見る）
+3. どの状態か判断できないときは、やり直さずに止め、各リポジトリの `git status` / `git diff` と DB を照らし合わせる
+
+asset.json の `name` だけを新名に直して `daid sync` してはいけない。sync は DB の行を name で引くので、
+新名の行を**新しい ID で**作ってしまう。また、フォルダだけを戻してやり直すと、asset.json が新名のままのとき
+「asset.json の name が旧名と一致しない」で止まる（これは食い違いを見つけるための意図した拒否）。
+
+**古い daid（0.6.1-alpha 以前）との混在:** DB の列は NULL を許す追加だけなので、古い daid が新しい DB を読んでも壊れない。
+ただし古い daid の `asset update` は `previous_names` を知らないため、asset.json からこの欄を消す。
+改名を使ったら、その DB と assets/ を扱う daid を全部更新するまで、古い daid で `asset update` しない。
+`sync`（asset.json → DB）は asset.json に欄が無ければ DB の履歴を消さない（`SyncService.ApplyAssetJson`）。
+
+**前提:** `assets/<name>/` は独立した通常の clone であること。`.git` の中に絶対パスを持つ構成
+（`git worktree add` で作った作業ツリーなど）は、移動の後に `git worktree repair` が要る。
+
+**名前・パスで結ばれているものの調査結果（2026-11-15、コードを全文検索して確認）:**
+
+| 対象 | 結び方 | 改名での扱い |
+|------|--------|--------------|
+| 部品のリンク `AssetComponents` | ID | 引き継がれる（変更不要） |
+| 親子のリンク `AssetSubAssets` | ID | 引き継がれる（変更不要） |
+| 他の装置の `asset_links.json` の `child_assets[].child_asset_name` | **名前** | **同じ処理で書き換える**（`asset bom` / `asset list` / `sync` がこの名前でフォルダを引くため、書き換えないと切れる）。他の欄は落とさない（JsonNode で該当欄だけ置換） |
+| DB `Assets.DirectoryPath` | **絶対パス** | 同じトランザクションで更新 |
+| DB `VectorIndex` の `AssetName`（部品 spec の行）・文書チャンク（`Type=asset_doc`）の行 | **名前・パス** | 同じトランザクションで、`AssetId` が一致する行（DB の ID と asset.json の ID の両方）だけを対象にする。**文書チャンクの行は消す**（書き換えない）。部品（spec）の行は PartId が部品の ID で名前から作られないので、装置名だけ更新する（別の装置・アーカイブ済みの行は触らない） |
+| `VectorIndex.Embedding`（埋め込み）と HNSW キャッシュ | 名前を含むテキストから計算 | 直せない。**`daid sync --include-vectors` の再実行を勧める**（コマンドが表示する）。検索結果の表示・絞り込みは更新した DB の行を使うので、再実行までも壊れない |
+| `VectorIndex` の文書チャンクの決定論的 ID（`SyncCommand.DocChunkId`: `名前/ファイル#n` から生成） | 名前 | **行を消す**。書き換えて残すと、改名してアーカイブしたあと旧名を再利用した別の装置の同期が、PartId の一致でその行を上書きする（Codex 4 周目の指摘）。次の `sync --include-vectors` が新しい名前のキーで作り直す |
+| BOM（`asset bom`） | `asset_links.json` と `assets/<名前>/` | 上の `asset_links.json` の書き換えで足りる（BOM 自体は保存しない） |
+| ArtifactScanner | パーツのディレクトリを走査 | 装置名を持たない（影響なし） |
+| ダッシュボード・MCP の応答 | DB の `Assets` と `assets/<名前>/` を毎回引く | 保存しない（影響なし）。DB の更新後は新名・新パスで返る |
+| 設定（Settings テーブル） | 装置名を持たない | 影響なし |
+| `archive_index.json` / `archive/assets/<名前>.zip` | 名前 | アーカイブ済みの装置は対象外（`assets/` に無い）。旧名で復元されることに注意 |
+| 利用者のリポジトリ側 | — | 範囲外: ハブの `.gitignore` に装置名が列挙されている場合、git のリモートの名前、`git worktree add` した作業ツリー（`git worktree repair` が要る） |
+
+**名前の検査（`ValidateName`）:** 装置名はそのままフォルダ名になる。空・前後の空白・`.` `..`・末尾の `.`・
+255 文字超・Windows の禁止文字（`<>:"/\|?*` と制御文字）・予約名（`CON` `PRN` `AUX` `NUL` `COM1-9` `LPT1-9` と
+上付き数字の `COM¹²³` `LPT¹²³`、拡張子付きも。`COM10` は通す）を拒否する。**新しく付ける名前（改名の新名・`asset add`・MCP の
+`AddAsset`）には、さらに UTF-8 で 255 バイトの上限を課す**（`ValidateNewName`。Linux の一般的なファイルシステムの上限は
+文字数でなくバイト数で、日本語は 1 文字 3 バイト）。旧名にはバイト上限を課さない（既存の長い名前を改名できなくなるため）。
+`asset add` にも同じ検査を入れた（改名後の名前が `add` で作れない名前にならないよう、判定を 1 か所に保つため。終了コード 2）。
+OS の `GetInvalidFileNameChars` は OS ごとに違うので、Windows の禁止文字を固定で含めて結果をそろえている。
+
+**終了コード（既知の問題と対処）:** System.CommandLine の呼び出し（`Program.Main` の `InvokeAsync`）は、`Task` を返すハンドラが
+`Environment.ExitCode` に入れた値を拾わず、**常に 0 を返す**（実測: DB の無い場所での `asset list`（exit 3 のはず）や
+既存の `asset add` の「既に存在」（exit 1 のはず）も 0 になる）。`asset rename` は仕様どおり失敗を終了コード 1 にするため、
+ハンドラを `Task<int>` にして**戻り値で返す**。`asset add` の名前の検査（終了コード 2）も同じ形で返す。
+**#8 で全体を直した:** `Program.Main` は `Program.RunAsync` を呼び、`ResolveExitCode(InvokeAsync の戻り値, Environment.ExitCode)`
+（戻り値が 0 のときだけ `Environment.ExitCode` を採る純関数）を返す。`Environment.ExitCode` を設定するだけのハンドラの失敗も、
+終了コードに届く。**挙動の変更:** これまで失敗しても 0 だったコマンドが 0 以外を返す（`asset list` などでプロジェクトが無いときは 3、
+`check` で整合性エラーがあれば 5 など）。スクリプトが 0 を前提にしていれば直す。`CommandFailureContractTests` が、
+`Program.BuildRootCommand()` から全コマンドを列挙し、プロジェクトの無い場所で（`setup`・`update`・`mcp`・`dashboard`・`restore` を除いて）
+すべて終了コード 3 で失敗することを確かめる（コマンドを足すと自動で対象になる）。
+
+**`--json` の失敗の契約（`JsonGuard`、#10）:** `--json` を持つコマンドは、失敗しても**標準出力が有効な JSON 1 つ**になり、診断（人が読む文）は標準エラーに出る。
+各コマンドは `Handler = JsonGuard.Wrap(this, CommandHandler.Create<...>(Execute))` で包む。包んだハンドラは標準出力を一度バッファへ受け、
+終わってから判定する（純関数 `JsonGuard.ResolveStdout`）: 成功ならコマンドの出力のまま。例外で終わったときは、途中の出力を捨てて失敗の JSON
+`{ "success": false, "errors": [...], "exitCode": N }` を出す（診断は標準エラーに `[ERROR]` で出す）。0 以外の終了コードで、コマンド自身が
+有効な JSON を 1 つ出していればそれを尊重し（`asset rename` の失敗の JSON など）、出していなければ標準エラーの行を `errors` にして失敗の JSON を出す。
+`--json` を足したコマンドは、`Wrap` を通さないと `CommandFailureContractTests` が落ちる（葉のコマンドのハンドラの型で固定している）。
+
+**検査の方針:** 判定は純関数の単体テスト（`AssetRenamePlannerTests`）、実行と戻しは一時ディレクトリの実ファイル＋実 SQLite の
+テスト（`AssetRenameServiceTests`）で固める。戻しは「各段階（フォルダ・JSON・参照・DB 保存後）で例外を注入」と
+「DB のトリガで更新を本当に失敗させる」と「Windows でフォルダ内のファイルを開いたままにして移動を失敗させる」の 3 通りで確かめる。
+統合シナリオは `docs/TEST_SCENARIO.md` の Phase 10c。
 
 ### daid asset unlink
 
@@ -2132,6 +2314,7 @@ API キーは以下の優先順序で解決される:
 | 2026-02-18 | - | バグ修正（search --local 重複キー、archive Windows 対応）、`daid part update` / `daid asset bom` コマンド追加、パーツ価格管理 CLI 公開 | - |
 | 2026-02-18 | - | `daid asset update` コマンド追加、ダッシュボード編集機能（装置・パーツのインライン編集 UI）、ダッシュボード CSS/レイアウト修正（ダークテーマ対応） | - |
 | 2026-02-19 | - | Phase C + D-1 実装: パーツ重複検出（`daid check --duplicates`）、asset 文書ベクトルインデックス登録（`daid sync --include-vectors` で `.md` ファイル対応）、asset メタデータ拡充（Status + Tags、フィルタリング対応）、バッチアーカイブ（`--all-dormant` / `--list`）、埋め込みプロバイダー選定（`EmbeddingProviderFactory` で mock/ollama/openai/azure 切替） | - |
+| 2026-11-15 | - | `daid asset rename` 追加（#7。ID を変えずに名前とフォルダを変える。asset.json / DB に `previous_names`、他の装置の `asset_links.json` の子装置の参照と DB・ベクトル索引の名前・パスを同じ処理で揃える、失敗時は逆順に戻す）。`asset add` に名前の検査を追加 | - |
 
 ## 備考
 
@@ -2202,7 +2385,7 @@ MCP 仕様は `YYYY-MM-DD` 形式で改訂される。**本サーバーは 2026-
 {
   "supportedVersions": ["2026-07-28"],
   "capabilities": { "logging": {}, "tools": { "listChanged": true } },
-  "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "design-aid", "version": "0.6.1-alpha" } }
+  "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "design-aid", "version": "0.6.2-alpha" } }
 }
 ```
 

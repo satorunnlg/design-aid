@@ -481,4 +481,49 @@ public class SyncServiceTests : IDisposable
         // sync 側のパース（TryParseAssetStatus）と対で保つ。
         Assert.Equal(expected, SyncService.ToJsonStatus(status));
     }
+    // ---- ApplyAssetJson（sync の asset.json → DB の取り込み） ----
+
+    [Fact]
+    public void ApplyAssetJson_新規作成でprevious_namesと状態とタグをDBへ移す()
+    {
+        var json = new AssetJson
+        {
+            Id = Guid.NewGuid(), Name = "new-name", DisplayName = "表示", Description = "説明",
+            Status = "dormant", Tags = new List<string> { "a" }, PreviousNames = new List<string> { "old-1", "old-2" }
+        };
+
+        var asset = SyncService.ApplyAssetJson(null, json, "/x/assets/new-name");
+
+        Assert.Equal("new-name", asset.Name);
+        Assert.Equal(new[] { "old-1", "old-2" }, asset.PreviousNames);
+        Assert.Equal(AssetStatus.Dormant, asset.Status);
+        Assert.Equal(new[] { "a" }, asset.Tags);
+        Assert.Equal(Path.GetFullPath("/x/assets/new-name"), asset.DirectoryPath);
+    }
+
+    [Fact]
+    public void ApplyAssetJson_既存の更新でprevious_namesとパスを移し同じ実体を返す()
+    {
+        var existing = Asset.Create("new-name", "/old/path");
+        var json = new AssetJson { Id = existing.Id, Name = "new-name", PreviousNames = new List<string> { "old-1" } };
+
+        var asset = SyncService.ApplyAssetJson(existing, json, "/x/assets/new-name");
+
+        Assert.Same(existing, asset);
+        Assert.Equal(new[] { "old-1" }, asset.PreviousNames);
+        Assert.Equal(Path.GetFullPath("/x/assets/new-name"), asset.DirectoryPath);
+    }
+
+    [Fact]
+    public void ApplyAssetJson_asset_jsonに欄が無ければDBの履歴を消さない()
+    {
+        var existing = Asset.Create("new-name", "/x/assets/new-name");
+        existing.Update(previousNames: new List<string> { "old-1" });
+        // 古い daid が書いた asset.json（previous_names を知らない）
+        var json = new AssetJson { Id = existing.Id, Name = "new-name", PreviousNames = null };
+
+        SyncService.ApplyAssetJson(existing, json, "/x/assets/new-name");
+
+        Assert.Equal(new[] { "old-1" }, existing.PreviousNames);
+    }
 }

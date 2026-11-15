@@ -136,6 +136,15 @@ public class RestoreCommand : Command
                 Console.WriteLine();
                 Console.WriteLine($"復元先: {dataDir}");
 
+                // 復元は装置・DB を丸ごと置き換える。復元先が既にプロジェクトなら、ほかの変更と同時に走らせない
+                using var restoreLock = !dryRun && Directory.Exists(dataDir)
+                    ? DesignAid.Application.Services.ProjectLock.TryAcquire(dataDir) : null;
+                if (!dryRun && Directory.Exists(dataDir) && restoreLock == null)
+                {
+                    Console.Error.WriteLine("[ERROR] 別の変更が実行中です。終わってからやり直してください。");
+                    return 1;
+                }
+
                 if (dryRun)
                 {
                     Console.WriteLine();
@@ -187,12 +196,28 @@ public class RestoreCommand : Command
     /// </summary>
     private static async Task ExtractDataFilesAsync(ZipArchive archive, string destDir)
     {
+        // 展開する前に、全エントリが展開先の下に収まることを確かめる（zip-slip）。
+        // 1 つでも外を指していれば、何も展開せずに止める
+        var escaping = DesignAid.Application.Services.SafeZip.FindEscapingEntry(
+            destDir, archive.Entries.Select(e => e.FullName));
+        if (escaping != null)
+        {
+            throw new InvalidDataException($"バックアップに、展開先の外を指すエントリがあります: {escaping}（何も展開しませんでした）");
+        }
+
         Directory.CreateDirectory(destDir);
 
         foreach (var entry in archive.Entries)
         {
             // 空のディレクトリエントリはスキップ
             if (string.IsNullOrEmpty(entry.Name))
+            {
+                continue;
+            }
+
+            // ロックファイル（サブディレクトリの同じ名前も含む）は展開しない。
+            // 復元中は自分がそのファイルを開いているので、上書きしようとすると失敗する
+            if (DesignAid.Application.Services.ProjectLock.IsLockFileName(entry.Name))
             {
                 continue;
             }
